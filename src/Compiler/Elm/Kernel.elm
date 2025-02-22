@@ -267,17 +267,12 @@ toVarTable pkg foreigns imports =
 addImport : Pkg.Name -> Foreigns -> VarTable -> Src.Import -> VarTable
 addImport pkg foreigns vtable (Src.Import (A.At _ importName) maybeAlias exposing_) =
   if Name.isKernel importName then
-    case maybeAlias of
-      Just _ ->
-        Debug.todo ("cannot use `as` with kernel import of: " ++ importName)
-
-      Nothing ->
-        let
-          home = Name.getKernel importName
-          add table name =
-            Map.insert (Name.sepBy 0x5F {-_-} home name) (JsVar home name) table
-        in
-        MList.foldl add vtable (toNames exposing_)
+    let
+      home = Name.getKernel importName
+      add table name =
+        Map.insert (Name.sepBy 0x5F {-_-} home name) (JsVar home name) table
+    in
+    MList.foldl add vtable (toNames exposing_)
 
   else
     let
@@ -296,36 +291,36 @@ toPrefix home maybeAlias =
       alias
 
     Nothing ->
-      if Name.hasDot home then
-        Debug.todo ("kernel imports with dots need an alias: " ++ home)
-      else
-        home
+      home
 
 
 toNames : Src.Exposing -> TList Name.Name
 toNames exposing_ =
   case exposing_ of
     Src.Open ->
-      Debug.todo "cannot have `exposing (..)` in kernel code."
+      -- TODO "cannot have `exposing (..)` in kernel code."
+      []
 
     Src.Explicit exposedList ->
-      MList.map toName exposedList
+      List.filterMap toName exposedList
 
 
-toName : Src.Exposed -> Name.Name
+toName : Src.Exposed -> Maybe Name.Name
 toName exposed =
   case exposed of
     Src.Lower (A.At _ name) ->
-      name
+      Just name
 
     Src.Upper (A.At _ name) Src.Private ->
-      name
+      Just name
 
     Src.Upper _ (Src.Public _) ->
-      Debug.todo "cannot have Maybe(..) syntax in kernel code header"
+      -- TODO "cannot have Maybe(..) syntax in kernel code header"
+      Nothing
 
     Src.Operator _ _ ->
-      Debug.todo "cannot use binops in kernel code"
+      -- TODO "cannot use binops in kernel code"
+      Nothing
 
 
 

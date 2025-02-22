@@ -6,12 +6,13 @@ module Extra.System.MVector exposing
     , init
     , length
     , modify
-    , read
     , replicate
+    , tryRead
     , unsafeFreeze
     , write
     )
 
+import Dict
 import Extra.System.IO.Pure as IO
 import Extra.System.IORef as IORef exposing (IORef)
 import Extra.Type.List exposing (TList)
@@ -44,7 +45,25 @@ grow ((MVector id len) as mv) n (( nextId, map, refState ) as state) =
             ( MVector nextId (len + n)
             , let
                 ( copy, nextRefState ) =
-                    IO.traverseMap (\r -> IO.bind (IORef.read r) IORef.new) vec refState
+                    vec
+                        |> Dict.foldl
+                            (\k v ( res, s ) ->
+                                let
+                                    ( maybeA, s2 ) =
+                                        IORef.tryRead v s
+                                in
+                                maybeA
+                                    |> Maybe.map
+                                        (\a ->
+                                            let
+                                                ( newRef, s3 ) =
+                                                    IORef.new a s2
+                                            in
+                                            ( res |> Dict.insert k newRef, s3 )
+                                        )
+                                    |> Maybe.withDefault ( res, s )
+                            )
+                            ( Dict.empty, refState )
               in
               ( nextId + 1
               , Map.insert nextId copy map
@@ -71,14 +90,18 @@ modify (MVector id _) f i (( nextId, map, refState ) as state) =
             ( (), state )
 
 
-read : MVector a -> Int -> IO a a
-read (MVector id _) i ( nextId, map, refState ) =
+tryRead : MVector a -> Int -> IO a (Maybe a)
+tryRead (MVector id _) i (( nextId, map, refState ) as state) =
     case getRef id i map of
         Just ref ->
-            liftResult nextId map <| IORef.read ref refState
+            liftResult nextId map <| IORef.tryRead ref refState
 
         Nothing ->
-            Debug.todo "MVector.read: id not found"
+            ( Nothing, state )
+
+
+
+-- TODO "MVector.read: id not found"
 
 
 replicate : Int -> a -> IO a (MVector a)
@@ -107,7 +130,8 @@ unsafeFreeze : MVector a -> IO a (TList a)
 unsafeFreeze (MVector id _) (( nextId, map, refState ) as state) =
     case Map.lookup id map of
         Just vec ->
-            liftResult nextId map <| IO.traverseList IORef.read (Map.elems vec) refState
+            (liftResult nextId map <| IO.traverseList IORef.tryRead (Map.elems vec) refState)
+                |> Tuple.mapFirst (List.filterMap identity)
 
         Nothing ->
             ( [], state )

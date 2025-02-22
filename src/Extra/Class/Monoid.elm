@@ -1,11 +1,4 @@
-module Extra.Class.Monoid exposing
-    ( Mappend
-    , Mempty
-    )
-
-
-type alias Mempty a =
-    a
+module Extra.Class.Monoid exposing (Mappend)
 
 
 type alias Mappend a =

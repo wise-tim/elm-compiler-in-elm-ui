@@ -1,5 +1,5 @@
 module Compiler.AST.Utils.Shader exposing
-    ( Source
+    ( Source(..)
     , Type(..)
     , Types(..)
     , bSource
@@ -44,7 +44,7 @@ type Type
 
 toJsStringBuilder : Source -> String
 toJsStringBuilder (Source src) =
-  src
+    src
 
 
 

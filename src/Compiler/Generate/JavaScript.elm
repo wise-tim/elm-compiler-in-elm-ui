@@ -205,77 +205,82 @@ addGlobalHelp mode graph comparable state =
     addDeps deps someState =
       Set.foldl (addGlobal mode graph) someState deps
   in
-  case Map.ex graph comparable of
-    Opt.Define expr deps ->
-      {- NEW: Expr.generateAsync -}
-      let
-        ( isLocalAppDef, moduleName, defName ) =
-          case global of
-            Opt.Global (ModuleName.Canonical pkg mName) dName -> ( pkg == Pkg.dummyName, mName, dName )
+  case Map.lookup comparable graph of
+    Just node ->
+      case node of
+        Opt.Define expr deps ->
+          {- NEW: Expr.generateAsync -}
+          let
+            ( isLocalAppDef, moduleName, defName ) =
+              case global of
+                Opt.Global (ModuleName.Canonical pkg mName) dName -> ( pkg == Pkg.dummyName, mName, dName )
 
-        ( isAsyncDef, maybeBpNames ) =
-          case expr of
-            Opt.Function _ _ ->
-              ( Mode.isAsyncActive mode && isLocalAppDef, Nothing )
-            Opt.Call func args ->
-              ( Mode.isAsyncActive mode && isLocalAppDef && Expr.isBreakpointDef func args, Just ( moduleName, defName ) )
-            _ ->
-              ( False, Nothing )
+            ( isAsyncDef, maybeBpNames ) =
+              case expr of
+                Opt.Function _ _ ->
+                  ( Mode.isAsyncActive mode && isLocalAppDef, Nothing )
+                Opt.Call func args ->
+                  ( Mode.isAsyncActive mode && isLocalAppDef && Expr.isBreakpointDef func args, Just ( moduleName, defName ) )
+                _ ->
+                  ( False, Nothing )
 
-        exprMode =
-          if isAsyncDef then mode else Mode.deActivate mode
-      in
-      addStmt (addDeps deps state) (
-        var global (Expr.generateAsync isAsyncDef maybeBpNames exprMode expr)
-      )
+            exprMode =
+              if isAsyncDef then mode else Mode.deActivate mode
+          in
+          addStmt (addDeps deps state) (
+            var global (Expr.generateAsync isAsyncDef maybeBpNames exprMode expr)
+          )
 
-    Opt.DefineTailFunc argNames body deps ->
-      addStmt (addDeps deps state) (
-        let (Opt.Global _ name) = global in
-        var global (Expr.generateTailDef mode name argNames body)
-      )
+        Opt.DefineTailFunc argNames body deps ->
+          addStmt (addDeps deps state) (
+            let (Opt.Global _ name) = global in
+            var global (Expr.generateTailDef mode name argNames body)
+          )
 
-    Opt.Ctor index arity ->
-      addStmt state (
-        var global (Expr.generateCtor mode global index arity)
-      )
+        Opt.Ctor index arity ->
+          addStmt state (
+            var global (Expr.generateCtor mode global index arity)
+          )
 
-    Opt.Link linkedGlobal ->
-      addGlobal mode graph state (Opt.toGlobalComparable linkedGlobal)
+        Opt.Link linkedGlobal ->
+          addGlobal mode graph state (Opt.toGlobalComparable linkedGlobal)
 
-    Opt.Cycle names values functions deps ->
-      addStmt (addDeps deps state) (
-        generateCycle mode global names values functions
-      )
+        Opt.Cycle names values functions deps ->
+          addStmt (addDeps deps state) (
+            generateCycle mode global names values functions
+          )
 
-    Opt.Manager effectsType ->
-      generateManager mode graph global effectsType state
+        Opt.Manager effectsType ->
+          generateManager mode graph global effectsType state
 
-    Opt.Kernel chunks deps ->
-      if isDebugger global && not (Mode.isDebug mode) then
-        state
-      else
-        addKernel (addDeps deps state) (generateKernel mode chunks)
+        Opt.Kernel chunks deps ->
+          if isDebugger global && not (Mode.isDebug mode) then
+            state
+          else
+            addKernel (addDeps deps state) (generateKernel mode chunks)
 
-    Opt.Enum index ->
-      addStmt state (
-        generateEnum mode global index
-      )
+        Opt.Enum index ->
+          addStmt state (
+            generateEnum mode global index
+          )
 
-    Opt.Box ->
-      addStmt (addGlobal mode graph state (Opt.toGlobalComparable identity_)) (
-        generateBox mode global
-      )
+        Opt.Box ->
+          addStmt (addGlobal mode graph state (Opt.toGlobalComparable identity_)) (
+            generateBox mode global
+          )
 
-    Opt.PortIncoming decoder deps ->
-      addStmt (addDeps deps state) (
-        generatePort mode global "incomingPort" decoder
-      )
+        Opt.PortIncoming decoder deps ->
+          addStmt (addDeps deps state) (
+            generatePort mode global "incomingPort" decoder
+          )
 
-    Opt.PortOutgoing encoder deps ->
-      addStmt (addDeps deps state) (
-        generatePort mode global "outgoingPort" encoder
-      )
+        Opt.PortOutgoing encoder deps ->
+          addStmt (addDeps deps state) (
+            generatePort mode global "outgoingPort" encoder
+          )
+          
+    Nothing ->
+      state
 
 
 addStmt : State -> JS.Stmt -> State
@@ -626,8 +631,6 @@ checkedMerge a b =
     (Nothing, main) ->
       main
 
-    (main, Nothing) ->
+    (main, _) ->
+      -- TODO "cannot have two modules with the same name"
       main
-
-    (Just _, Just _) ->
-      Debug.todo "cannot have two modules with the same name"

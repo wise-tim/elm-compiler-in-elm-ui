@@ -76,19 +76,22 @@ new lens a =
                 |> IO.fmap (\() -> mvar)
 
 
-read : Lens gs a -> MVar a -> IO.IO gs a
+read : Lens gs a -> MVar a -> IO.IO gs (Maybe a)
 read ({ getter } as lens) mvar =
     IO.bind IO.get <|
         \gs0 ->
             case getEntry mvar (getter gs0) of
-                Waiting f ->
+                Just (Waiting f) ->
                     IO.bind (f ()) <|
                         \a ->
                             write lens mvar a
-                                |> IO.fmap (\() -> a)
+                                |> IO.fmap (\() -> Just a)
 
-                Done a ->
-                    IO.return a
+                Just (Done a) ->
+                    IO.return (Just a)
+
+                Nothing ->
+                    IO.return Nothing
 
 
 wait : Lens gs a -> MVar a -> (() -> IO.IO gs a) -> IO.IO gs ()
@@ -110,9 +113,9 @@ modify { getter, setter } f =
     IO.modify (\gs -> setter (f (getter gs)) gs)
 
 
-getEntry : MVar a -> State gs a -> Entry gs a
+getEntry : MVar a -> State gs a -> Maybe (Entry gs a)
 getEntry (MVar id) ( _, map, name ) =
-    Map.ex map id
+    Map.lookup id map
 
 
 setEntry : MVar a -> Entry gs a -> State gs a -> State gs a

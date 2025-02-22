@@ -26,6 +26,7 @@ import Compiler.Elm.Constraint as C
 import Compiler.Elm.Package as Pkg
 import Compiler.Elm.Version as V
 import Compiler.Json.Decode as D
+import Dict
 import Extra.System.File as SysFile
 import Extra.System.IO as IO
 import Extra.Type.Either exposing (Either(..))
@@ -111,7 +112,7 @@ addDeps : State -> Pkg.Comparable -> V.Version -> Details
 addDeps (State _ _ _ constraints) name vsn =
   case Map.lookup (name, V.toComparable vsn) constraints of
     Just (Constraints _ deps) -> Details vsn deps
-    Nothing                   -> Debug.todo "compiler bug manifesting in Deps.Solver.addDeps"
+    Nothing                   -> Details (V.Version -1 -1 -1) (Dict.fromList [])
 
 
 noSolution : Connection -> Result a
@@ -180,7 +181,9 @@ getTransitive constraints solution unvisited visited =
       then getTransitive constraints solution infos visited
       else
         let
-          newDeps = getDeps (Map.ex constraints (pkg, V.toComparable vsn))
+          newDeps = getDeps (Map.lookup (pkg, V.toComparable vsn) constraints 
+            |> Maybe.withDefault (Constraints (C.anything) Dict.empty))
+          
           newUnvisited = Map.toList (Map.intersection solution (Map.difference newDeps visited))
           newVisited = Map.insert pkg vsn visited
         in

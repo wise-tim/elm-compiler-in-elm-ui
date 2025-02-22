@@ -234,9 +234,12 @@ addDef : ModuleName.Canonical -> Annotations -> Can.Def -> Opt.LocalGraph -> TRe
 addDef home annotations def graph =
   case def of
     Can.Def (A.At region name) args body ->
-      let (Can.Forall _ tipe) = Map.ex annotations name in
-      MResult.bind (MResult.warn <| W.MissingTypeAnnotation region name tipe) <| \_ ->
-      addDefHelp region annotations home name args body graph
+      case Map.lookup name annotations of
+        Just (Can.Forall _ tipe) ->
+          MResult.bind (MResult.warn <| W.MissingTypeAnnotation region name tipe) <| \_ ->
+          addDefHelp region annotations home name args body graph
+        Nothing ->
+          MResult.throw (E.CompilerBug ("Could not find definition " ++ name))
 
     Can.TypedDef (A.At region name) _ typedArgs body _ ->
       addDefHelp region annotations home name (MList.map Tuple.first typedArgs) body graph
@@ -247,34 +250,37 @@ addDefHelp region annotations home name args body ((Opt.LocalGraph _ nodes field
   if name /= Name.l_main then
     MResult.ok (addDefNode home name args body Set.empty graph)
   else
-    let
-      (Can.Forall _ tipe) = Map.ex annotations name
-
-      addMain (deps, fields, main) =
-        addDefNode home name args body deps <|
-          Opt.LocalGraph (Just main) nodes (Map.unionWith (+) fields fieldCounts)
-    in
-    let
-      otherwise () =
-        MResult.throw (E.BadType region tipe)
-    in
-    case Type.deepDealias tipe of
-      Can.TType hm nm [_] -> if hm == ModuleName.virtualDom && nm == Name.node then
-        MResult.ok <| addMain <| Names.run <|
-          Names.registerKernel Name.virtualDom Opt.Static else otherwise ()
-
-      Can.TType hm nm [flags, _, message] -> if hm == ModuleName.platform && nm == Name.program then
-        case Effects.checkPayload flags of
-          Right () ->
+    case Map.lookup name annotations of
+      Just (Can.Forall _ tipe)  ->
+        let
+          addMain (deps, fields, main) =
+            addDefNode home name args body deps <|
+              Opt.LocalGraph (Just main) nodes (Map.unionWith (+) fields fieldCounts)
+        in
+        let
+          otherwise () =
+            MResult.throw (E.BadType region tipe)
+        in
+        case Type.deepDealias tipe of
+          Can.TType hm nm [_] -> if hm == ModuleName.virtualDom && nm == Name.node then
             MResult.ok <| addMain <| Names.run <|
-              Names.fmap (Opt.Dynamic message) <| Port.toFlagsDecoder flags
+              Names.registerKernel Name.virtualDom Opt.Static else otherwise ()
 
-          Left (subType, invalidPayload) ->
-            MResult.throw (E.BadFlags region subType invalidPayload)
-        else otherwise ()
+          Can.TType hm nm [flags, _, message] -> if hm == ModuleName.platform && nm == Name.program then
+            case Effects.checkPayload flags of
+              Right () ->
+                MResult.ok <| addMain <| Names.run <|
+                  Names.fmap (Opt.Dynamic message) <| Port.toFlagsDecoder flags
 
-      _ ->
-        otherwise ()
+              Left (subType, invalidPayload) ->
+                MResult.throw (E.BadFlags region subType invalidPayload)
+            else otherwise ()
+
+          _ ->
+            otherwise ()
+            
+      Nothing ->
+        MResult.throw (E.CompilerBug ("Could not find definition " ++ name))
 
 
 addDefNode : ModuleName.Canonical -> Name.Name -> TList Can.Pattern -> Can.Expr -> Set.Set Opt.GlobalComparable -> Opt.LocalGraph -> Opt.LocalGraph

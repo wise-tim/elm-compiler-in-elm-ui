@@ -55,7 +55,7 @@ toDoc localizer context tipe =
     Lambda _ _ ->
       case MList.map (toDoc localizer RT.Func) (collectLambdas tipe) of
         a :: b :: cs -> RT.lambda context a b cs
-        x -> Debug.todo <| "toDoc Lambda " ++ Debug.toString x
+        _ -> d "<function>"
 
     Var name ->
       D.fromName name

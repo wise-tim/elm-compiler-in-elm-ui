@@ -5,7 +5,7 @@ module Extra.System.IORef exposing
     , init
     , modify
     , new
-    , read
+    , tryRead
     , write
     )
 
@@ -37,14 +37,13 @@ new a ( nextId, map ) =
     ( IORef nextId, ( nextId + 1, Map.insert nextId a map ) )
 
 
-read : IORef a -> IO a a
-read (IORef id) (( _, map ) as state) =
-    case Map.lookup id map of
-        Just a ->
-            ( a, state )
+tryRead : IORef a -> IO a (Maybe a)
+tryRead (IORef id) (( _, map ) as state) =
+    ( Map.lookup id map, state )
 
-        Nothing ->
-            Debug.todo "IORef.read: id not found"
+
+
+-- TODO "IORef.read: id not found"
 
 
 write : IORef a -> a -> IO a ()
@@ -55,7 +54,12 @@ write (IORef id) a ( nextId, map ) =
 modify : IORef a -> (a -> a) -> IO a ()
 modify ref f state =
     let
-        ( a, state_ ) =
-            read ref state
+        ( maybeA, state_ ) =
+            tryRead ref state
     in
-    write ref (f a) state_
+    case maybeA of
+        Just a ->
+            write ref (f a) state_
+
+        Nothing ->
+            ( (), state )

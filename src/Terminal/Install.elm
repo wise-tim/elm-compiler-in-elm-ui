@@ -227,19 +227,22 @@ makePkgPlan (Solver.Env cache _ connection registry) pkg (Outline.PkgOutline a b
             Task.bind (Task.io <| Solver.verify cache connection registry cons) <| \result ->
             case result of
               Solver.Ok solution ->
-                let
-                  (Solver.Details vsn _) = Map.ex solution pkg
+                case Map.lookup pkg solution of
+                  Just (Solver.Details vsn _)  ->
+                    let
+                      con = C.untilNextMajor vsn
+                      new = Map.insert pkg con old
+                      changes = detectChanges old new
+                      news = Map.mapMaybe keepNew changes
+                    in
+                    Task.return <| Changes changes <| Outline.Pkg <|
+                      Outline.PkgOutline a b c d e
+                        {- pkg_deps -} (addNews (Just pkg) news deps)
+                        {- pkg_test_deps -} (addNews Nothing news test)
+                        h
 
-                  con = C.untilNextMajor vsn
-                  new = Map.insert pkg con old
-                  changes = detectChanges old new
-                  news = Map.mapMaybe keepNew changes
-                in
-                Task.return <| Changes changes <| Outline.Pkg <|
-                  Outline.PkgOutline a b c d e
-                    {- pkg_deps -} (addNews (Just pkg) news deps)
-                    {- pkg_test_deps -} (addNews Nothing news test)
-                    h
+                  Nothing ->
+                    Task.throw (Exit.InstallNoOnlinePkgSolution (Pkg.fromComparable pkg))
 
               Solver.NoSolution ->
                 Task.throw (Exit.InstallNoOnlinePkgSolution (Pkg.fromComparable pkg))

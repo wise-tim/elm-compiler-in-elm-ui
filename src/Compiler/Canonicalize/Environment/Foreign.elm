@@ -77,14 +77,8 @@ toSafeImports (ModuleName.Canonical pkg _) imports =
 
 
 isNormal : Src.Import -> Bool
-isNormal (Src.Import (A.At _ name) maybeAlias _) =
-  if Name.isKernel name
-  then
-    case maybeAlias of
-      Nothing -> False
-      Just _ -> Debug.todo "kernel imports cannot use `as`"
-  else
-    True
+isNormal (Src.Import (A.At _ name) _ _) =
+  not (Name.isKernel name)
 
 
 
@@ -92,40 +86,43 @@ isNormal (Src.Import (A.At _ name) maybeAlias _) =
 
 
 addImport : Map.Map ModuleName.Raw I.Interface -> State -> Src.Import -> TResult i w State
-addImport ifaces (State vs ts cs bs qvs qts qcs) (Src.Import (A.At _ name) maybeAlias exposing_) =
-  let
-    (I.Interface pkg defs unions aliases binops) = Map.ex ifaces name
-    prefix = MMaybe.maybe name identity maybeAlias
-    home = ModuleName.Canonical pkg name
+addImport ifaces (State vs ts cs bs qvs qts qcs) (Src.Import (A.At region name) maybeAlias exposing_) =
+  case Map.lookup name ifaces of
+    Just (I.Interface pkg defs unions aliases binops) ->
+      let     
+        prefix = MMaybe.maybe name identity maybeAlias
+        home = ModuleName.Canonical pkg name
 
-    rawTypeInfo =
-      Map.union
-        (Map.mapMaybeWithKey (unionToType home) unions)
-        (Map.mapMaybeWithKey (aliasToType home) aliases)
+        rawTypeInfo =
+          Map.union
+            (Map.mapMaybeWithKey (unionToType home) unions)
+            (Map.mapMaybeWithKey (aliasToType home) aliases)
 
-    vars = Map.map (Env.Specific home) defs
-    types = Map.map (Env.Specific home << Tuple.first) rawTypeInfo
-    ctors = Map.foldr (addExposed << Tuple.second) Map.empty rawTypeInfo
+        vars = Map.map (Env.Specific home) defs
+        types = Map.map (Env.Specific home << Tuple.first) rawTypeInfo
+        ctors = Map.foldr (addExposed << Tuple.second) Map.empty rawTypeInfo
 
-    qvs2 = addQualified prefix vars qvs
-    qts2 = addQualified prefix types qts
-    qcs2 = addQualified prefix ctors qcs
-  in
-  case exposing_ of
-    Src.Open ->
-      let
-        vs2 = addExposed vs vars
-        ts2 = addExposed ts types
-        cs2 = addExposed cs ctors
-        bs2 = addExposed bs (Map.mapWithKey (binopToBinop home) binops)
+        qvs2 = addQualified prefix vars qvs
+        qts2 = addQualified prefix types qts
+        qcs2 = addQualified prefix ctors qcs
       in
-      MResult.ok (State vs2 ts2 cs2 bs2 qvs2 qts2 qcs2)
+      case exposing_ of
+        Src.Open ->
+          let
+            vs2 = addExposed vs vars
+            ts2 = addExposed ts types
+            cs2 = addExposed cs ctors
+            bs2 = addExposed bs (Map.mapWithKey (binopToBinop home) binops)
+          in
+          MResult.ok (State vs2 ts2 cs2 bs2 qvs2 qts2 qcs2)
 
-    Src.Explicit exposedList ->
-      MResult.foldM
-        (addExposedValue home vars rawTypeInfo binops)
-        (State vs ts cs bs qvs2 qts2 qcs2)
-        exposedList
+        Src.Explicit exposedList ->
+          MResult.foldM
+            (addExposedValue home vars rawTypeInfo binops)
+            (State vs ts cs bs qvs2 qts2 qcs2)
+            exposedList
+    Nothing -> 
+      MResult.throw (Error.ImportNotFound region name [])
 
 
 addExposed : Env.Exposed a -> Env.Exposed a -> Env.Exposed a

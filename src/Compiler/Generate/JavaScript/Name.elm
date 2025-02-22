@@ -221,7 +221,8 @@ toByte n =
   else if n == 52 then 95 {- _ -}
   else if n == 53 then 36 {- $ -}
   else if n < 64  then (48 + n - 54) {- digit -}
-  else Debug.todo <| "cannot convert int " ++ String.fromInt n ++ " to ASCII"
+  else -- TODO <| "cannot convert int " ++ String.fromInt n ++ " to ASCII"
+   0
 
 
 

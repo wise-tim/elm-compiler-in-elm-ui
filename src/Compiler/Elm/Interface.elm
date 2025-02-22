@@ -21,6 +21,7 @@ import Compiler.AST.Utils.Binop as Binop
 import Compiler.Data.Name as Name
 import Compiler.Elm.Package as Pkg
 import Compiler.Reporting.Annotation as A
+import Dict
 import Extra.Data.Binary as B
 import Extra.Type.Map as Map
 
@@ -94,7 +95,7 @@ restrict exports dict =
 
 toOp : Map.Map Name.Name Can.Annotation -> Can.Binop -> Binop
 toOp types (Can.Binop_ associativity precedence name) =
-    Binop name (Map.ex types name) associativity precedence
+    Binop name (Map.lookup name types |> Maybe.withDefault (Can.Forall Dict.empty Can.TUnit)) associativity precedence
 
 
 restrictUnions : Can.Exports -> Map.Map Name.Name Can.Union -> Map.Map Name.Name Union
@@ -122,7 +123,8 @@ restrictUnions exports unions =
                                     ClosedUnion union
 
                                 _ ->
-                                    Debug.todo "impossible exports discovered in restrictUnions"
+                                    -- TODO "impossible exports discovered in restrictUnions"
+                                    PrivateUnion union
             in
             Map.mergeA identity identity onLeft onRight onBoth explicitExports unions
 

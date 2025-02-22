@@ -7,9 +7,7 @@ module Extra.Type.Map exposing
     , dropMissing
     , elems
     , empty
-    , ex
     , filter
-    , findMin
     , findWithDefault
     , foldl
     , foldlM
@@ -111,30 +109,9 @@ empty =
     Dict.empty
 
 
-ex : Map comparable a -> comparable -> a
-ex m k =
-    -- (!)
-    case lookup k m of
-        Just a ->
-            a
-
-        Nothing ->
-            Debug.todo <| "Map.ex: key " ++ Debug.toString k ++ " not found"
-
-
 filter : (a -> Bool) -> Map comparable a -> Map comparable a
 filter p m =
     Dict.filter (\_ a -> p a) m
-
-
-findMin : Map comparable a -> ( comparable, a )
-findMin m =
-    case lookupMin m of
-        Just ka ->
-            ka
-
-        Nothing ->
-            Debug.todo "Map.findMin: empty map has no minimal element"
 
 
 findWithDefault : a -> comparable -> Map comparable a -> a

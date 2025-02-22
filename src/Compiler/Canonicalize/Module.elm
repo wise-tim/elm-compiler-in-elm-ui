@@ -99,6 +99,7 @@ detectCycles sccs =
             d::ds -> MResult.fmap (Can.DeclareRec d ds) (detectCycles otherSccs)
 
 
+
 detectBadCycles : Graph.SCC Can.Def -> TResult i w Can.Def
 detectBadCycles scc =
   case scc of
@@ -106,7 +107,7 @@ detectBadCycles scc =
       MResult.ok def
 
     Graph.CyclicSCC [] ->
-      Debug.todo "The definition of Data.Graph.SCC should not allow empty CyclicSCC!"
+      MResult.throw (Error.CompilerBug "The definition of Data.Graph.SCC should not allow empty CyclicSCC!")
 
     Graph.CyclicSCC (def::defs) ->
       let

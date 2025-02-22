@@ -119,11 +119,7 @@ splitDots name =
 
 getKernel : Name -> Name
 getKernel name =
-    if isKernel name then
-        String.dropLeft 11 name
-
-    else
-        Debug.todo "getKernel: not a kernel name"
+    String.dropLeft 11 name
 
 
 

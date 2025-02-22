@@ -25,6 +25,7 @@ type Error
   = BadType A.Region Can.Type
   | BadCycle A.Region Name.Name (TList Name.Name)
   | BadFlags A.Region Can.Type E.InvalidPayload
+  | CompilerBug String
 
 
 
@@ -120,3 +121,10 @@ toReport localizer source err =
                     ++ " everything with encoders and decoders for more control and better errors."
                 ]
             )
+            
+    CompilerBug reason ->
+      Report.Report
+        "Compiler bug"
+        (A.Region (A.Position 0 0) (A.Position 0 0))
+        []
+        (D.toSimpleNote reason)

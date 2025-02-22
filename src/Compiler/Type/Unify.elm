@@ -15,6 +15,7 @@ import Extra.System.IO.Pure as IO
 import Extra.Type.List exposing (TList)
 import Extra.Type.Map as Map
 import Extra.Class.Applicative as Applicative
+import Dict
 
 
 
@@ -168,11 +169,15 @@ guardedUnify left right =
     if equivalent
       then ok vars ()
       else
-        IO.bind (UF.get left) <| \leftDesc ->
-        IO.bind (UF.get right) <| \rightDesc ->
-        case actuallyUnify (Context left leftDesc right rightDesc) of
-          Unify k ->
-            k vars ok err
+        IO.bind (UF.get left) <| \maybeLeftDesc ->
+        IO.bind (UF.get right) <| \maybeRightDesc ->
+          case (maybeLeftDesc, maybeRightDesc) of
+            (Just leftDesc, Just rightDesc) ->
+              case actuallyUnify (Context left leftDesc right rightDesc) of
+                Unify k ->
+                  k vars ok err
+            _ ->
+              ok vars ()
 
 
 subUnify : Type.Variable -> Type.Variable -> Unify t z ()
@@ -437,8 +442,14 @@ comparableOccursCheck (Context _ _ var _) =
 unifyComparableRecursive : Type.Variable -> Unify t z ()
 unifyComparableRecursive var =
   bind (register <|
-    IO.bind (UF.get var) <| \(Type.Descriptor _ rank _ _) ->
-    UF.fresh <| Type.Descriptor (Type.unnamedFlexSuper Type.Comparable) rank Type.noMark Nothing) <| \compVar ->
+    IO.bind (UF.get var) <| \maybeDesc -> 
+      case maybeDesc of 
+        Just (Type.Descriptor _ rank _ _) ->
+          UF.fresh <| Type.Descriptor (Type.unnamedFlexSuper Type.Comparable) rank Type.noMark Nothing
+        Nothing ->
+          UF.fresh <| Type.Descriptor (Type.unnamedFlexSuper Type.Comparable) -1 Type.noMark Nothing
+    ) 
+    <| \compVar ->
   guardedUnify compVar var
 
 
@@ -683,14 +694,19 @@ type RecordStructure =
 
 gatherFields : Map.Map Name.Name Type.Variable -> Type.Variable -> IO t RecordStructure
 gatherFields fields variable =
-  IO.bind (UF.get variable) <| \(Type.Descriptor content _ _ _) ->
-  case content of
-    Type.Structure (Type.Record1 subFields subExt) ->
-      gatherFields (Map.union fields subFields) subExt
+  IO.bind (UF.get variable) <| \maybeDesc ->
+    case maybeDesc of
+      Just (Type.Descriptor content _ _ _) ->
+        case content of
+          Type.Structure (Type.Record1 subFields subExt) ->
+            gatherFields (Map.union fields subFields) subExt
 
-    Type.Alias _ _ _ var ->
-      -- TODO may be dropping useful alias info here
-      gatherFields fields var
+          Type.Alias _ _ _ var ->
+            -- TODO may be dropping useful alias info here
+            gatherFields fields var
 
-    _ ->
-      IO.return (RecordStructure fields variable)
+          _ ->
+            IO.return (RecordStructure fields variable)
+
+      Nothing ->
+        IO.return (RecordStructure Dict.empty variable)

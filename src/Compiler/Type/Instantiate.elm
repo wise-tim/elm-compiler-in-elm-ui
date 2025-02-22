@@ -34,7 +34,7 @@ fromSrcType freeVars sourceType =
         |> IO.andMap (fromSrcType freeVars result)
 
     Can.TVar name ->
-      IO.return (Map.ex freeVars name)
+      IO.return (Map.lookup name freeVars |> Maybe.withDefault Type.UnitN)
 
     Can.TType home name args ->
       IO.fmap (Type.AppN home name) <| IO.traverseList (fromSrcType freeVars) args
@@ -67,7 +67,7 @@ fromSrcType freeVars sourceType =
               IO.return Type.EmptyRecordN
 
             Just ext ->
-              IO.return (Map.ex freeVars ext))
+              IO.return (Map.lookup ext freeVars |> Maybe.withDefault Type.UnitN))
 
 
 fromSrcFieldType : Map.Map Name.Name Type.Type -> Can.FieldType -> IO t Type.Type

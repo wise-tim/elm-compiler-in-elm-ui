@@ -11,7 +11,7 @@ mappend pMappendA pMappendB ( a1, b1 ) ( a2, b2 ) =
     ( pMappendA a1 a2, pMappendB b1 b2 )
 
 
-mempty : Monoid.Mempty a -> Monoid.Mempty b -> Monoid.Mempty ( a, b )
+mempty : a -> b -> ( a, b )
 mempty ma mb =
     ( ma, mb )
 

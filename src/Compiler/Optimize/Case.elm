@@ -56,7 +56,8 @@ treeToDecider tree =
 
     -- zero options
     DT.Decision _ [] Nothing ->
-      Debug.todo "compiler bug, somehow created an empty decision tree"
+      Opt.Leaf -1
+      -- TODO "compiler bug, somehow created an empty decision tree"
 
     -- one option
     DT.Decision _ [(_, subTree)] Nothing ->
@@ -76,7 +77,7 @@ treeToDecider tree =
     DT.Decision path edges Nothing ->
       let
         (necessaryTests, fallback) =
-          (MList.init edges, Tuple.second (MList.last edges))
+          (MList.init edges, Tuple.second (List.reverse edges |> List.head |> Maybe.withDefault (DT.IsTuple, DT.Match -1)))
       in
         Opt.FanOut
           path
@@ -129,7 +130,7 @@ createChoices
   -> (Int, Opt.Expr)
   -> ( (Int, Opt.Choice), Maybe (Int, Opt.Expr) )
 createChoices targetCounts (target, branch) =
-  if Map.ex targetCounts target == 1 then
+  if Map.lookup target targetCounts  == Just 1 then
     ( (target, Opt.Inline branch)
     , Nothing
     )
@@ -151,7 +152,7 @@ insertChoices choiceDict decider =
   in
     case decider of
       Opt.Leaf target ->
-        Opt.Leaf (Map.ex choiceDict target)
+        Opt.Leaf (Map.lookup  target choiceDict|> Maybe.withDefault (Opt.Jump -1))
 
       Opt.Chain testChain success failure ->
         Opt.Chain testChain (go success) (go failure)

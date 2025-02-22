@@ -54,7 +54,7 @@ import Extra.Type.Map as Map
 import Extra.Type.Maybe as MMaybe
 import Extra.Type.Set as Set
 import Global
-
+import Dict
 
 
 -- PUBLIC STATE
@@ -388,7 +388,12 @@ verifyDependencies ((Env root _ _ _ _) as env) time outline solution directDeps 
     IO.bind (MVar.newEmpty lensMVDepMap) <| \mvar ->
     IO.bind (Map.traverseWithKey IO.pure IO.liftA2 (\k v -> fork lensMVDep (verifyDep env mvar solution (Pkg.fromComparable k) v)) solution) <| \mvars ->
     IO.bind (MVar.write lensMVDepMap mvar mvars) <| \_ ->
-    IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVDep) mvars) <| \deps ->
+    IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVDep) mvars) <| \depMaybes ->
+    let
+      deps = Dict.toList depMaybes
+        |> List.filterMap (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
+        |> Dict.fromList
+    in
     case Map.sequenceA Either.pure Either.liftA2 deps of
       Left _ ->
         IO.bind (Stuff.getElmHome) <| \home ->
@@ -509,47 +514,71 @@ build cache depsMVar pkg (Solver.Details vsn _) f fs =
       IO.return <| Left <| Just <| Exit.BD_BadBuild pkg vsn f
 
     Right (Outline.Pkg (Outline.PkgOutline _ _ _ _ exposed deps _ _)) ->
-      IO.bind (MVar.read lensMVDepMap depsMVar) <| \allDeps ->
-      IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVDep) (Map.intersection allDeps deps)) <| \directDeps ->
-      case Map.sequenceA Either.pure Either.liftA2 directDeps of
-        Left _ ->
-          IO.return <| Left <| Nothing
+      IO.bind (MVar.read lensMVDepMap depsMVar) <| \maybeAllDeps ->
+      case maybeAllDeps of
+        Just allDeps ->
+          IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVDep) (Map.intersection allDeps deps)) <| \directDepMaybes ->
+          let
+            directDeps = Dict.toList directDepMaybes
+              |> List.filterMap (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
+              |> Dict.fromList
+          in
+          case Map.sequenceA Either.pure Either.liftA2 directDeps of
+            Left _ ->
+              IO.return <| Left <| Nothing
 
-        Right directArtifacts ->
-          let src = SysFile.addName (Stuff.package cache pkg vsn) "src" in
-          let foreignDeps = gatherForeignInterfaces directArtifacts in
-          let exposedDict = Map.fromKeys (\_ -> ()) (Outline.flattenExposed exposed) in
-          IO.bind (getDocsStatus cache pkg vsn) <| \docsStatus ->
-          IO.bind (MVar.newEmpty lensMVStatusMap) <| \mvar ->
-          IO.bind (Map.traverseWithKey IO.pure IO.liftA2 (\k _ -> fork lensMVStatus (crawlModule foreignDeps mvar pkg src docsStatus k)) exposedDict) <| \mvars ->
-          IO.bind (MVar.write lensMVStatusMap mvar mvars) <| \_ ->
-          IO.bind (Map.mapM_ IO.return IO.bind (MVar.read lensMVStatus) mvars) <| \_ ->
-          IO.bind (IO.andThen (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVStatus)) <| MVar.read lensMVStatusMap mvar) <| \maybeStatuses ->
-          case Map.sequenceA Just Maybe.map2 maybeStatuses of
-            Nothing ->
-              IO.return <| Left <| Just <| Exit.BD_BadBuild pkg vsn f
+            Right directArtifacts ->
+              let src = SysFile.addName (Stuff.package cache pkg vsn) "src" in
+              let foreignDeps = gatherForeignInterfaces directArtifacts in
+              let exposedDict = Map.fromKeys (\_ -> ()) (Outline.flattenExposed exposed) in
+              IO.bind (getDocsStatus cache pkg vsn) <| \docsStatus ->
+              IO.bind (MVar.newEmpty lensMVStatusMap) <| \mvar ->
+              IO.bind (Map.traverseWithKey IO.pure IO.liftA2 (\k _ -> fork lensMVStatus (crawlModule foreignDeps mvar pkg src docsStatus k)) exposedDict) <| \mvars ->
+              IO.bind (MVar.write lensMVStatusMap mvar mvars) <| \_ ->
+              IO.bind (Map.mapM_ IO.return IO.bind (MVar.read lensMVStatus) mvars) <| \_ ->
+              IO.bind (
+                IO.andThen 
+                  (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVStatus)) 
+                  (MVar.read lensMVStatusMap mvar |> IO.fmap (Maybe.withDefault Dict.empty))
+                ) 
+              <| \maybeMaybeStatuses ->
+                let
+                  maybeStatuses = Dict.toList maybeMaybeStatuses
+                    |> List.filterMap (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
+                    |> Dict.fromList
+                in
+                case Map.sequenceA Just Maybe.map2 maybeStatuses of
+                  Nothing ->
+                    IO.return <| Left <| Just <| Exit.BD_BadBuild pkg vsn f
 
-            Just statuses ->
-              IO.bind (MVar.newEmpty lensMVResultMap) <| \rmvar ->
-              IO.bind (Map.traverse IO.pure IO.liftA2 (\v -> fork lensMVResult (compile pkg rmvar v)) statuses) <| \rmvars ->
-              IO.bind (MVar.write lensMVResultMap rmvar rmvars) <| \_ ->
-              IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVResult) rmvars) <| \maybeResults ->
-              case Map.sequenceA Just Maybe.map2 maybeResults of
-                Nothing ->
-                  IO.return <| Left <| Just <| Exit.BD_BadBuild pkg vsn f
+                  Just statuses ->
+                    IO.bind (MVar.newEmpty lensMVResultMap) <| \rmvar ->
+                    IO.bind (Map.traverse IO.pure IO.liftA2 (\v -> fork lensMVResult (compile pkg rmvar v)) statuses) <| \rmvars ->
+                    IO.bind (MVar.write lensMVResultMap rmvar rmvars) <| \_ ->
+                    IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVResult) rmvars) <| \maybeMaybeResults ->
+                    let
+                      maybeResults = Dict.toList maybeMaybeResults
+                        |> List.filterMap (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
+                        |> Dict.fromList
+                    in
+                    case Map.sequenceA Just Maybe.map2 maybeResults of
+                      Nothing ->
+                        IO.return <| Left <| Just <| Exit.BD_BadBuild pkg vsn f
 
-                Just results ->
-                  let
-                    path = SysFile.addName (Stuff.package cache pkg vsn) "artifacts.dat"
-                    ifaces = gatherInterfaces exposedDict results
-                    objects = gatherObjects results
-                    artifacts = Artifacts ifaces objects
-                    fingerprints = Set.insert (toComparable f) fs
-                  in
-                  IO.bind (writeDocs cache pkg vsn docsStatus results) <| \_ ->
-                  IO.bind (File.writeBinary bArtifactCache path (ArtifactCache fingerprints artifacts)) <| \_ ->
-                  IO.return (Right artifacts)
+                      Just results ->
+                        let
+                          path = SysFile.addName (Stuff.package cache pkg vsn) "artifacts.dat"
+                          ifaces = gatherInterfaces exposedDict results
+                          objects = gatherObjects results
+                          artifacts = Artifacts ifaces objects
+                          fingerprints = Set.insert (toComparable f) fs
+                        in
+                        IO.bind (writeDocs cache pkg vsn docsStatus results) <| \_ ->
+                        IO.bind (File.writeBinary bArtifactCache path (ArtifactCache fingerprints artifacts)) <| \_ ->
+                        IO.return (Right artifacts)
 
+        Nothing ->
+          IO.return <| Left <| Just <| Exit.BD_BadBuild pkg vsn f
 
 
 -- GATHER
@@ -572,7 +601,7 @@ addLocalGraph name status graph =
 gatherInterfaces : Map.Map ModuleName.Raw () -> Map.Map ModuleName.Raw TResult -> Map.Map ModuleName.Raw I.DependencyInterface
 gatherInterfaces exposed artifacts =
   let
-    onLeft  = Map.mapMissing identity (\_ () -> Debug.todo "compiler bug manifesting in Elm.Details.gatherInterfaces")
+    onLeft  = Map.mapMissing identity (\_ () -> I.Public (I.Interface (Pkg.Name "" "compiler bug manifesting in Elm.Details.gatherInterfaces") Dict.empty Dict.empty Dict.empty Dict.empty))
     onRight = Map.mapMaybeMissing identity     (\_    iface -> toLocalInterface I.private iface)
     onBoth  = Map.zipWithMaybeMatched identity (\_ () iface -> toLocalInterface I.public  iface)
   in
@@ -676,13 +705,18 @@ crawlFile foreignDeps mvar pkg src docsStatus expectedName path =
 
 crawlImports : Map.Map ModuleName.Raw ForeignInterface -> MVar StatusDict -> Pkg.Name -> FilePath -> TList Src.Import -> IO a d e f g h (Map.Map ModuleName.Raw ())
 crawlImports foreignDeps mvar pkg src imports =
-  IO.bind (MVar.read lensMVStatusMap mvar) <| \statusDict ->
-  let deps = Map.fromList (MList.map (\i -> (Src.getImportName i, ())) imports) in
-  let news = Map.difference deps statusDict in
-  IO.bind (Map.traverseWithKey IO.pure IO.liftA2 (\k _ -> fork lensMVStatus (crawlModule foreignDeps mvar pkg src DocsNotNeeded k)) news) <| \mvars ->
-  IO.bind (MVar.write lensMVStatusMap mvar (Map.union mvars statusDict)) <| \_ ->
-  IO.bind (Map.mapM_ IO.return IO.bind (MVar.read lensMVStatus) mvars) <| \_ ->
-  IO.return deps
+  IO.bind (MVar.read lensMVStatusMap mvar) <| \maybeStatusDict ->
+    case maybeStatusDict of
+      Just statusDict ->
+        let deps = Map.fromList (MList.map (\i -> (Src.getImportName i, ())) imports) in
+        let news = Map.difference deps statusDict in
+        IO.bind (Map.traverseWithKey IO.pure IO.liftA2 (\k _ -> fork lensMVStatus (crawlModule foreignDeps mvar pkg src DocsNotNeeded k)) news) <| \mvars ->
+        IO.bind (MVar.write lensMVStatusMap mvar (Map.union mvars statusDict)) <| \_ ->
+        IO.bind (Map.mapM_ IO.return IO.bind (MVar.read lensMVStatus) mvars) <| \_ ->
+        IO.return deps
+
+      Nothing ->
+        IO.return Dict.empty
 
 
 crawlKernel : Map.Map ModuleName.Raw ForeignInterface -> MVar StatusDict -> Pkg.Name -> FilePath -> ModuleName.Raw -> IO a d e f g h (Maybe Status)
@@ -725,23 +759,34 @@ compile : Pkg.Name -> MVar (Map.Map ModuleName.Raw (MVar (Maybe TResult))) -> St
 compile pkg mvar status () =
   case status of
     SLocal docsStatus deps modul ->
-      IO.bind (MVar.read lensMVResultMap mvar) <| \resultsDict ->
-      IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVResult) (Map.intersection resultsDict deps)) <| \maybeResults ->
-      case Map.sequenceA Just Maybe.map2 maybeResults of
-        Nothing ->
-          IO.return Nothing
-
-        Just results ->
-          case Compile.compile pkg (Map.mapMaybe getInterface results) modul of
-            Left _ ->
+      IO.bind (MVar.read lensMVResultMap mvar) <| \maybeResultsDict ->
+      case maybeResultsDict of
+        Just resultsDict ->
+          IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVResult) (Map.intersection resultsDict deps)) <| \maybeMaybeResults ->
+          let
+            maybeResults = Dict.toList maybeMaybeResults
+              |> List.filterMap (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
+              |> Dict.fromList
+          in
+          case Map.sequenceA Just Maybe.map2 maybeResults of
+            Nothing ->
               IO.return Nothing
 
-            Right (Compile.Artifacts canonical annotations objects) ->
-              let
-                ifaces = I.fromModule pkg canonical annotations
-                docs = makeDocs docsStatus canonical
-              in
-              IO.return (Just (RLocal ifaces objects docs))
+            Just results ->
+              case Compile.compile pkg (Map.mapMaybe getInterface results) modul of
+                Left _ ->
+                  IO.return Nothing
+
+                Right (Compile.Artifacts canonical annotations objects) ->
+                  let
+                    ifaces = I.fromModule pkg canonical annotations
+                    docs = makeDocs docsStatus canonical
+                  in
+                  IO.return (Just (RLocal ifaces objects docs))
+
+
+        Nothing ->
+          IO.return Nothing
 
     SForeign iface ->
       IO.return (Just (RForeign iface))

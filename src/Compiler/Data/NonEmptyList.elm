@@ -7,7 +7,7 @@ module Compiler.Data.NonEmptyList exposing
   --
   , foldr
   , sequenceA
-  , traverse
+  , traverse, combineMaybes
   )
 
 
@@ -17,6 +17,7 @@ import Extra.Class.Functor as Functor
 import Extra.Class.Traversable as Traversable
 import Extra.Data.Binary as B
 import Extra.Type.List as MList
+import Maybe.Extra
 
 
 
@@ -43,6 +44,14 @@ toList (CList x xs) =
 
 fmap : Functor.Fmap a (TList a) b (TList b)
 fmap func (CList x xs) = CList (func x) (MList.map func xs)
+
+
+combineMaybes :  TList (Maybe a) -> Maybe (TList a)
+combineMaybes (CList x xs) = 
+  case Maybe.Extra.combine (x :: xs) of
+      Just (y :: ys) -> Just (CList y ys)
+      _ -> Nothing
+
 
 
 foldr : Foldable.Foldr a (TList a) b

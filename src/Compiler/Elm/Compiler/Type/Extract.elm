@@ -26,6 +26,7 @@ import Extra.Type.Tuple as MTuple
 import Extra.Class.Functor as Functor
 import Extra.Class.Applicative as Applicative
 import Extra.Class.Monad as Monad
+import Extra.Type.Map as Map
 
 
 
@@ -172,14 +173,22 @@ extractTransitive types (Deps seenAliases seenUnions) (Deps nextAliases nextUnio
       in
       MTuple.mappend MList.mappend MList.mappend result remainingResult
 
+fromConstant : a -> Extractor z a
+fromConstant const = 
+  Extractor (\a b f -> f a b const)
+
 
 extractAlias : Types -> Opt.GlobalComparable -> Extractor z T.Alias
 extractAlias (Types dict) comparable =
   let
     (Opt.Global home name) = Opt.fromGlobalComparable comparable
-    (Can.Alias args aliasType) = Map.ex (getAliasInfo (Map.ex dict (ModuleName.toComparable home))) name
   in
-  fmap (T.Alias (toPublicName home name) args) <| extract aliasType
+  case Map.lookup (ModuleName.toComparable home) dict |> Maybe.andThen (\t -> Map.lookup name (getAliasInfo t)) of
+    Just (Can.Alias args aliasType) ->
+      fmap (T.Alias (toPublicName home name) args) <| extract aliasType
+    Nothing ->
+      fromConstant (T.Alias ("Compiler bug missing alias " ++ name) [] T.Unit)
+
 
 
 extractUnion : Types -> Opt.GlobalComparable -> Extractor z T.Union
@@ -190,9 +199,13 @@ extractUnion (Types dict) comparable =
     else
       let
         pname = toPublicName home name
-        (Can.Union vars ctors _ _) = Map.ex (getUnionInfo (Map.ex dict (ModuleName.toComparable home))) name
       in
-      fmap (T.Union pname vars) <| MList.traverse pure liftA2 extractCtor ctors
+      case Map.lookup (ModuleName.toComparable home) dict |> Maybe.andThen (\t -> Map.lookup name (getUnionInfo t)) of
+        Just (Can.Union vars ctors _ _) ->
+          fmap (T.Union pname vars) <| MList.traverse pure liftA2 extractCtor ctors
+        Nothing ->
+          fromConstant (T.Union ("Compiler bug missing union " ++ name) [] [])
+
 
 
 extractCtor : Can.Ctor -> Extractor z (Name.Name, TList T.Type)

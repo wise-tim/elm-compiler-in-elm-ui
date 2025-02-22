@@ -271,7 +271,7 @@ getMaxDepth problem =
   case problem of
     JD.Field _ prob  -> 1 + getMaxDepth prob
     JD.Index _ prob  -> 1 + getMaxDepth prob
-    JD.OneOf p ps    -> MList.maximum (getMaxDepth p :: MList.map getMaxDepth ps)
+    JD.OneOf p ps    -> List.maximum (getMaxDepth p :: MList.map getMaxDepth ps) |> Maybe.withDefault -1
     JD.Failure _ _   -> 0
     JD.Expecting _ _ -> 0
 

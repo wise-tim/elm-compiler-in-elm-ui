@@ -1,8 +1,8 @@
 module Compiler.Reporting.Error exposing
     ( Error(..)
     , Module(..)
-    , toDoc
     , toClient
+    , toDoc
     )
 
 import Builder.File as File
@@ -58,6 +58,7 @@ type Error
     | BadMains L.Localizer (OneOrMore.OneOrMore Main.Error)
     | BadPatterns (NE.TList PatternMatches.Error)
     | BadDocs Docs.Error
+    | CompilerBug String
 
 
 
@@ -88,6 +89,16 @@ toReports source err =
         BadDocs docsErr ->
             Docs.toReports source docsErr
 
+        CompilerBug reason ->
+            NE.CList
+                (Report.Report
+                    "Compiler bug"
+                    (A.Region (A.Position 0 0) (A.Position 0 0))
+                    []
+                    (D.toSimpleNote reason)
+                )
+                []
+
 
 
 -- TO DOC
@@ -95,48 +106,54 @@ toReports source err =
 
 toDoc : FilePath -> Module -> TList Module -> D.Doc
 toDoc root err errs =
-  let
-    (NE.CList m ms) = NE.sortBy getModificationTime (NE.CList err errs)
-  in
-  D.vcat (toDocHelp root m ms)
+    let
+        (NE.CList m ms) =
+            NE.sortBy getModificationTime (NE.CList err errs)
+    in
+    D.vcat (toDocHelp root m ms)
 
 
 toDocHelp : FilePath -> Module -> TList Module -> TList D.Doc
 toDocHelp root module1 modules =
-  case modules of
-    [] ->
-      [moduleToDoc root module1
-      ,d""
-      ]
+    case modules of
+        [] ->
+            [ moduleToDoc root module1
+            , d ""
+            ]
 
-    module2 :: otherModules ->
-      moduleToDoc root module1
-      :: toSeparator module1 module2
-      :: toDocHelp root module2 otherModules
+        module2 :: otherModules ->
+            moduleToDoc root module1
+                :: toSeparator module1 module2
+                :: toDocHelp root module2 otherModules
 
 
 toSeparator : Module -> Module -> D.Doc
 toSeparator beforeModule afterModule =
-  let
-    before = ModuleName.toChars (getName beforeModule) ++ "  ↑    "
-    after  = "    ↓  " ++  ModuleName.toChars (getName afterModule)
-  in
-    D.dullred <| D.vcat <|
-      [ D.indent (80 - String.length before) (D.fromChars before)
-      , d"====o======================================================================o===="
-      , D.fromChars after
-      , d""
-      , d""
-      ]
+    let
+        before =
+            ModuleName.toChars (getName beforeModule) ++ "  ↑    "
+
+        after =
+            "    ↓  " ++ ModuleName.toChars (getName afterModule)
+    in
+    D.dullred <|
+        D.vcat <|
+            [ D.indent (80 - String.length before) (D.fromChars before)
+            , d "====o======================================================================o===="
+            , D.fromChars after
+            , d ""
+            , d ""
+            ]
 
 
 getName : Module -> ModuleName.Raw
 getName (Module name _ _ _ _) =
-  name
+    name
+
 
 getModificationTime : Module -> Int
 getModificationTime (Module _ _ time _ _) =
-  File.toMillis time
+    File.toMillis time
 
 
 
@@ -145,36 +162,40 @@ getModificationTime (Module _ _ time _ _) =
 
 moduleToDoc : FilePath -> Module -> D.Doc
 moduleToDoc root (Module _ absolutePath _ source err) =
-  let
-    reports =
-      toReports (Code.toSource source) err
+    let
+        reports =
+            toReports (Code.toSource source) err
 
-    relativePath =
-      SysFile.makeRelative root absolutePath
-  in
-  D.vcat <| MList.map (reportToDoc relativePath) (NE.toList reports)
+        relativePath =
+            SysFile.makeRelative root absolutePath
+    in
+    D.vcat <| MList.map (reportToDoc relativePath) (NE.toList reports)
 
 
 reportToDoc : FilePath -> Report.Report -> D.Doc
 reportToDoc relativePath (Report.Report title _ _ message) =
-  D.vcat
-    [ toMessageBar title relativePath
-    , d""
-    , message
-    , d""
-    ]
+    D.vcat
+        [ toMessageBar title relativePath
+        , d ""
+        , message
+        , d ""
+        ]
 
 
 toMessageBar : String -> FilePath -> D.Doc
 toMessageBar title filePath =
-  let
-    usedSpace =
-      4 + String.length title + 1 + String.length (SysFile.toString filePath)
-  in
-    D.dullcyan <| D.fromChars <|
-      "-- " ++ title
-      ++ " " ++ String.repeat (max 1 (80 - usedSpace)) "-"
-      ++ " " ++ (SysFile.toString filePath)
+    let
+        usedSpace =
+            4 + String.length title + 1 + String.length (SysFile.toString filePath)
+    in
+    D.dullcyan <|
+        D.fromChars <|
+            "-- "
+                ++ title
+                ++ " "
+                ++ String.repeat (max 1 (80 - usedSpace)) "-"
+                ++ " "
+                ++ SysFile.toString filePath
 
 
 

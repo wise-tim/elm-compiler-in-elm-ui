@@ -330,7 +330,12 @@ commaSep conjunction addStyle names =
         _ ->
             MList.map (\name -> hcat [ addStyle name, fromChars "," ]) (MList.init names)
                 ++ [ conjunction
-                   , addStyle (MList.last names)
+                   , case List.reverse names |> List.head of
+                        Just head ->
+                            addStyle head
+
+                        Nothing ->
+                            empty
                    ]
 
 

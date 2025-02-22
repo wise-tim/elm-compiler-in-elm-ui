@@ -27,6 +27,7 @@ import Compiler.Reporting.Warning as W
 import Extra.Data.Graph as Graph
 import Extra.Type.List as MList exposing (TList)
 import Extra.Type.Map as Map
+import List.Extra
 
 
 
@@ -479,6 +480,8 @@ getPatternNames names (A.At region pattern) =
 
 -- GATHER TYPED ARGS
 
+zeroSrcPattern = A.At (A.Region (A.Position 0 0) (A.Position 0 0)) Src.PAnything
+
 
 gatherTypedArgs
   : Env.Env
@@ -501,7 +504,12 @@ gatherTypedArgs env name srcArgs tipe index revTypedArgs =
             (arg, argType) :: revTypedArgs
 
         _ ->
-          let (A.At start _, A.At end _) = (MList.head srcArgs, MList.last srcArgs) in
+          let 
+            (A.At start _, A.At end _) = 
+              (List.head srcArgs |> Maybe.withDefault zeroSrcPattern, 
+              List.Extra.last srcArgs |> Maybe.withDefault zeroSrcPattern)
+            
+          in
           MResult.throw <|
             Error.AnnotationTooShort (A.mergeRegions start end) name index (MList.length srcArgs)
 

@@ -379,44 +379,51 @@ toAnnotation variable =
 
 variableToCanType : Variable -> StateT t Can.Type
 variableToCanType variable =
-  bind (liftIO <| UF.get variable) <| \(Descriptor content _ _ _) ->
-  case content of
-    Structure term ->
-      termToCanType term
+  bind (liftIO <| UF.get variable) <|  (\maybeDesc -> 
+    case maybeDesc of 
+        Just (Descriptor content _ _ _) ->
+          case content of
+            Structure term ->
+              termToCanType term
 
-    FlexVar maybeName ->
-      case maybeName of
-        Just name ->
-          return (Can.TVar name)
+            FlexVar maybeName ->
+              case maybeName of
+                Just name ->
+                  return (Can.TVar name)
 
-        Nothing ->
-          bind getFreshVarName <| \name ->
-          bind (liftIO <| UF.modify variable (\(Descriptor _ a b c) -> Descriptor (FlexVar (Just name)) a b c)) <| \() ->
-          return (Can.TVar name)
+                Nothing ->
+                  bind getFreshVarName <| \name ->
+                  bind (liftIO <| UF.modify variable (\(Descriptor _ a b c) -> Descriptor (FlexVar (Just name)) a b c)) <| \() ->
+                  return (Can.TVar name)
 
-    FlexSuper super maybeName ->
-      case maybeName of
-        Just name ->
-          return (Can.TVar name)
+            FlexSuper super maybeName ->
+              case maybeName of
+                Just name ->
+                  return (Can.TVar name)
 
-        Nothing ->
-          bind (getFreshSuperName super) <| \name ->
-          bind (liftIO <| UF.modify variable (\(Descriptor _ a b c) -> Descriptor (FlexSuper super (Just name)) a b c)) <| \() ->
-          return (Can.TVar name)
+                Nothing ->
+                  bind (getFreshSuperName super) <| \name ->
+                  bind (liftIO <| UF.modify variable (\(Descriptor _ a b c) -> Descriptor (FlexSuper super (Just name)) a b c)) <| \() ->
+                  return (Can.TVar name)
 
-    RigidVar name ->
-      return (Can.TVar name)
+            RigidVar name ->
+              return (Can.TVar name)
 
-    RigidSuper _ name ->
-      return (Can.TVar name)
+            RigidSuper _ name ->
+              return (Can.TVar name)
 
-    Alias home name args realVariable ->
-      bind (MList.traverse pure liftA2 (MTuple.traverseSecond fmap variableToCanType) args) <| \canArgs ->
-      bind (variableToCanType realVariable) <| \canType ->
-      return (Can.TAlias home name canArgs (Can.Filled canType))
+            Alias home name args realVariable ->
+              bind (MList.traverse pure liftA2 (MTuple.traverseSecond fmap variableToCanType) args) <| \canArgs ->
+              bind (variableToCanType realVariable) <| \canType ->
+              return (Can.TAlias home name canArgs (Can.Filled canType))
 
-    Error ->
-      Debug.todo "cannot handle Error types in variableToCanType"
+            Error ->
+              return (Can.TUnit)
+              -- TODO "cannot handle Error types in variableToCanType"
+
+        Nothing -> 
+          return (Can.TVar "Compiler bug fetching variable's canonical type")
+  )
 
 
 termToCanType : FlatType -> StateT t Can.Type
@@ -445,7 +452,8 @@ termToCanType term =
             Can.TRecord canFields (Just name)
 
           _ ->
-            Debug.todo "Used toAnnotation on a type that is not well-formed"
+            Can.TUnit
+            -- TODO "Used toAnnotation on a type that is not well-formed"
 
     Unit1 ->
       return Can.TUnit
@@ -475,17 +483,23 @@ toErrorType variable =
 
 variableToErrorType : Variable -> StateT t ET.Type
 variableToErrorType variable =
-  bind (liftIO <| UF.get variable) <| \descriptor ->
-  let mark = getMark descriptor in
-  if mark == occursMark
-    then
-      return ET.Infinite
+  bind (liftIO <| UF.get variable) <| (\maybeDesc -> 
+    case maybeDesc of 
+      Just descriptor ->
+        let mark = getMark descriptor in
+        if mark == occursMark
+          then
+            return ET.Infinite
 
-    else
-      bind (liftIO <| UF.modify variable (setMark occursMark)) <| \() ->
-      bind (contentToErrorType variable (getContent descriptor)) <| \errType ->
-      bind (liftIO <| UF.modify variable (setMark mark)) <| \() ->
-      return errType
+          else
+            bind (liftIO <| UF.modify variable (setMark occursMark)) <| \() ->
+            bind (contentToErrorType variable (getContent descriptor)) <| \errType ->
+            bind (liftIO <| UF.modify variable (setMark mark)) <| \() ->
+            return errType
+
+      Nothing ->
+        return ET.Error
+  )
 
 
 superToSuper : SuperType -> ET.Super
@@ -573,7 +587,8 @@ termToErrorType term =
             ET.Record errFields (ET.RigidOpen ext)
 
           _ ->
-            Debug.todo "Used toErrorType on a type that is not well-formed"
+            ET.Unit
+            -- TODO "Used toErrorType on a type that is not well-formed"
 
     Unit1 ->
       return ET.Unit
@@ -692,63 +707,69 @@ getFreshSuperHelp prefix index taken =
 
 getVarNames : Variable -> Map.Map Name.Name Variable -> IO t (Map.Map Name.Name Variable)
 getVarNames var takenNames =
-  IO.bind (UF.get var) <| \(Descriptor content rank mark copy) ->
-  if mark == getVarNamesMark
-    then IO.return takenNames
-    else
-      IO.bind (UF.set var (Descriptor content rank getVarNamesMark copy)) <| \() ->
-      case content of
-        Error ->
-          IO.return takenNames
-
-        FlexVar maybeName ->
-          case maybeName of
-            Nothing ->
+  IO.bind (UF.get var) <| (\maybeDesc ->
+  case maybeDesc of
+    Just (Descriptor content rank mark copy) ->
+      if mark == getVarNamesMark
+        then IO.return takenNames
+        else
+          IO.bind (UF.set var (Descriptor content rank getVarNamesMark copy)) <| \() ->
+          case content of
+            Error ->
               IO.return takenNames
 
-            Just name ->
-              addName 0 name var (FlexVar << Just) takenNames
+            FlexVar maybeName ->
+              case maybeName of
+                Nothing ->
+                  IO.return takenNames
 
-        FlexSuper super maybeName ->
-          case maybeName of
-            Nothing ->
-              IO.return takenNames
+                Just name ->
+                  addName 0 name var (FlexVar << Just) takenNames
 
-            Just name ->
-              addName 0 name var (FlexSuper super << Just) takenNames
+            FlexSuper super maybeName ->
+              case maybeName of
+                Nothing ->
+                  IO.return takenNames
 
-        RigidVar name ->
-          addName 0 name var RigidVar takenNames
+                Just name ->
+                  addName 0 name var (FlexSuper super << Just) takenNames
 
-        RigidSuper super name ->
-          addName 0 name var (RigidSuper super) takenNames
+            RigidVar name ->
+              addName 0 name var RigidVar takenNames
 
-        Alias _ _ args _ ->
-          IO.foldrMList getVarNames takenNames (MList.map Tuple.second args)
+            RigidSuper super name ->
+              addName 0 name var (RigidSuper super) takenNames
 
-        Structure flatType ->
-          case flatType of
-            App1 _ _ args ->
-              IO.foldrMList getVarNames takenNames args
+            Alias _ _ args _ ->
+              IO.foldrMList getVarNames takenNames (MList.map Tuple.second args)
 
-            Fun1 arg body ->
-              IO.andThen (getVarNames arg) <| getVarNames body takenNames
+            Structure flatType ->
+              case flatType of
+                App1 _ _ args ->
+                  IO.foldrMList getVarNames takenNames args
 
-            EmptyRecord1 ->
-              IO.return takenNames
+                Fun1 arg body ->
+                  IO.andThen (getVarNames arg) <| getVarNames body takenNames
 
-            Record1 fields extension ->
-              IO.andThen (getVarNames extension) <|
-                IO.foldrMList getVarNames takenNames (Map.elems fields)
+                EmptyRecord1 ->
+                  IO.return takenNames
 
-            Unit1 ->
-              IO.return takenNames
+                Record1 fields extension ->
+                  IO.andThen (getVarNames extension) <|
+                    IO.foldrMList getVarNames takenNames (Map.elems fields)
 
-            Tuple1 a b Nothing ->
-              IO.andThen (getVarNames a) <| getVarNames b takenNames
+                Unit1 ->
+                  IO.return takenNames
 
-            Tuple1 a b (Just c) ->
-              IO.andThen (getVarNames a) <| IO.andThen (getVarNames b) <| getVarNames c takenNames
+                Tuple1 a b Nothing ->
+                  IO.andThen (getVarNames a) <| getVarNames b takenNames
+
+                Tuple1 a b (Just c) ->
+                  IO.andThen (getVarNames a) <| IO.andThen (getVarNames b) <| getVarNames c takenNames
+                  
+    Nothing -> 
+      IO.return takenNames
+  )
 
 
 

@@ -20,6 +20,7 @@ import Extra.Type.Map as Map
 
 -- ENCODE
 
+encodeUnit = Names.fmap (Opt.Function [Name.dollar]) <| encode "null"
 
 toEncoder : Can.Type -> Names.Tracker Opt.Expr
 toEncoder tipe =
@@ -28,21 +29,23 @@ toEncoder tipe =
       toEncoder (Type.dealias args alias_)
 
     Can.TLambda _ _ ->
-      Debug.todo "toEncoder: function"
+      -- TODO "toEncoder: function"
+      encodeUnit
 
     Can.TVar _ ->
-      Debug.todo "toEncoder: type variable"
+      -- TODO "toEncoder: type variable"
+      encodeUnit
 
     Can.TUnit ->
-      Names.fmap (Opt.Function [Name.dollar]) <| encode "null"
+      encodeUnit
 
     Can.TTuple a b c ->
       encodeTuple a b c
 
     Can.TType _ name args ->
       let
-        otherwise () =
-          Debug.todo "toEncoder: bad custom type"
+        otherwise () = encodeUnit
+          -- TODO "toEncoder: bad custom type"
       in
       case args of
         [] ->
@@ -63,7 +66,8 @@ toEncoder tipe =
           otherwise ()
 
     Can.TRecord _ (Just _) ->
-      Debug.todo "toEncoder: bad record"
+      -- TODO "toEncoder: bad record"
+      encodeUnit
 
     Can.TRecord fields Nothing ->
       let
@@ -159,10 +163,12 @@ toDecoder : Can.Type -> Names.Tracker Opt.Expr
 toDecoder tipe =
   case tipe of
     Can.TLambda _ _ ->
-      Debug.todo "functions should not be allowed through input ports"
+      decodeTuple0
+      -- TODO "functions should not be allowed through input ports"
 
     Can.TVar _ ->
-      Debug.todo "type variables should not be allowed through input ports"
+      decodeTuple0
+      -- TODO "type variables should not be allowed through input ports"
 
     Can.TAlias _ _ args alias_ ->
       toDecoder (Type.dealias args alias_)
@@ -175,8 +181,8 @@ toDecoder tipe =
 
     Can.TType _ name args ->
       let
-        otherwise () =
-          Debug.todo "toDecoder: bad type"
+        otherwise () = decodeTuple0
+          -- TODO "toDecoder: bad type"
       in
       case args of
         [] ->
@@ -197,7 +203,8 @@ toDecoder tipe =
           otherwise ()
 
     Can.TRecord _ (Just _) ->
-      Debug.todo "toDecoder: bad record"
+      decodeTuple0
+      -- TODO "toDecoder: bad record"
 
     Can.TRecord fields Nothing ->
       decodeRecord fields

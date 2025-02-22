@@ -39,6 +39,7 @@ type Error
     | AmbiguousBinop A.Region Name.Name ModuleName.Canonical (OneOrMore.OneOrMore ModuleName.Canonical)
     | BadArity A.Region BadArityContext Name.Name Int Int
     | Binop A.Region Name.Name Name.Name
+    | CompilerBug String
     | DuplicateDecl Name.Name A.Region A.Region
     | DuplicateType Name.Name A.Region A.Region
     | DuplicateCtor Name.Name A.Region A.Region
@@ -54,8 +55,7 @@ type Error
     | ExportNotFound A.Region VarKind Name.Name (TList Name.Name)
     | ExportOpenAlias A.Region Name.Name
     | ImportCtorByName A.Region Name.Name Name.Name
-    | -- TODO ImportNotFound can be removed
-      ImportNotFound A.Region Name.Name (TList ModuleName.Canonical)
+    | ImportNotFound A.Region Name.Name (TList ModuleName.Canonical)
     | ImportOpenAlias A.Region Name.Name
     | ImportExposingNotFound A.Region ModuleName.Canonical Name.Name (TList Name.Name)
     | NotFoundVar A.Region (Maybe Name.Name) Name.Name PossibleNames
@@ -794,6 +794,20 @@ toReport source err =
                             "tuples"
                             "for more comprehensive advice on working with large chunks of data in Elm."
                         ]
+                    )
+
+        CompilerBug info ->
+            let
+                emptyRegion =
+                    A.Region (A.Position 0 0) (A.Position 0 0)
+            in
+            Report.Report "COMPILER BUG"
+                emptyRegion
+                []
+            <|
+                Code.toSnippet source emptyRegion Nothing <|
+                    ( D.fromChars info
+                    , D.stack []
                     )
 
         TypeVarsUnboundInUnion unionRegion typeName allVars unbound unbounds ->

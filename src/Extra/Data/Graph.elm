@@ -61,9 +61,9 @@ stronglyConnCompR edges0 =
         nodeMap =
             Map.fromList sorted
 
-        getNode : Vertex -> ( node, comparable, TList comparable )
+        getNode : Vertex -> Maybe ( node, comparable, TList comparable )
         getNode vertex =
-            Map.ex nodeMap vertex
+            Map.lookup vertex nodeMap
 
         edges : TList ( Vertex, TList Vertex )
         edges =
@@ -102,14 +102,19 @@ stronglyConnCompR edges0 =
         toSCC component =
             case component of
                 [ vertex ] ->
-                    if Set.member vertex selfRefs then
-                        CyclicSCC [ getNode vertex ]
+                    case getNode vertex of
+                        Just n ->
+                            if Set.member vertex selfRefs then
+                                CyclicSCC [ n ]
 
-                    else
-                        AcyclicSCC (getNode vertex)
+                            else
+                                AcyclicSCC n
+
+                        Nothing ->
+                            CyclicSCC []
 
                 _ ->
-                    CyclicSCC (MList.map getNode component)
+                    CyclicSCC (List.filterMap getNode component)
     in
     MList.map toSCC components
 

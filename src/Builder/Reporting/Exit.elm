@@ -1293,8 +1293,8 @@ toModuleNameConventionTable srcDir names =
       )
 
     namePairs = MList.map toPair names
-    nameWidth = MList.maximum (11 :: MList.map (String.length << Tuple.first) namePairs)
-    pathWidth = MList.maximum ( 9 :: MList.map (String.length << Tuple.second) namePairs)
+    nameWidth = List.maximum (11 :: MList.map (String.length << Tuple.first) namePairs) |> Maybe.withDefault 11
+    pathWidth = List.maximum ( 9 :: MList.map (String.length << Tuple.second) namePairs) |> Maybe.withDefault 9
 
     padded width str =
       str ++ String.repeat (width - String.length str) " "

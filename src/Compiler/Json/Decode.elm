@@ -311,7 +311,8 @@ oneOf decoders =
           x -> x
 
       [] ->
-        Debug.todo "Ran into (Json.Decode.oneOf [])"
+        (Derr (Field "Compiler Bug: Ran into (Json.Decode.oneOf [])" (Expecting (A.Region (A.Position 0 0) (A.Position 0 0)) TInt)))
+        -- TODO "Ran into (Json.Decode.oneOf [])"
 
 
 oneOfHelp : AST -> TList (Decoder x a) -> Problem x -> TList (Problem x) -> DStep x a

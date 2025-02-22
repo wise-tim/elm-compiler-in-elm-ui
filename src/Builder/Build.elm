@@ -56,6 +56,7 @@ import Extra.System.MVar as MVar exposing (MVar)
 import Extra.Type.Set as Set
 import Global
 import Unicode as UChar
+import Dict
 
 
 
@@ -212,21 +213,32 @@ fromExposed root details docsGoal ((NE.CList e es) as exposed) =
   IO.bind (Map.fromKeysA IO.pure IO.liftA2 (\k -> fork lensMVStatus <| crawlModule env mvar docsNeed k) (e::es)) <| \roots ->
   IO.bind (MVar.write lensMVStatusMap mvar roots) <| \_ ->
   IO.bind (Map.mapM_ IO.return IO.bind (MVar.read lensMVStatus) roots) <| \_ ->
-  IO.bind (IO.andThen (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVStatus)) <| MVar.read lensMVStatusMap mvar) <| \statuses ->
+  IO.bind (IO.andThen (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVStatus)) 
+    <| (MVar.read lensMVStatusMap mvar |> IO.fmap (Maybe.withDefault Dict.empty))
+  ) <| \statuseMaybes ->
+    let
+      statuses = Dict.toList statuseMaybes
+        |> List.filterMap (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
+        |> Dict.fromList
+    in
+    -- compile
+    IO.bind (checkMidpoint dmvar statuses) <| \midpoint ->
+    case midpoint of
+      Left problem ->
+        IO.return (Left (Exit.BuildProjectProblem problem))
 
-  -- compile
-  IO.bind (checkMidpoint dmvar statuses) <| \midpoint ->
-  case midpoint of
-    Left problem ->
-      IO.return (Left (Exit.BuildProjectProblem problem))
-
-    Right foreigns ->
-      IO.bind (MVar.newEmpty lensMVResultMap) <| \rmvar ->
-      IO.bind (forkWithKey lensMVResult (checkModule env foreigns rmvar) statuses) <| \resultMVars ->
-      IO.bind (MVar.write lensMVResultMap rmvar resultMVars) <| \_ ->
-      IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVResult) resultMVars) <| \results ->
-      IO.bind (writeDetails root details results) <| \_ ->
-      finalizeExposed root docsGoal exposed results
+      Right foreigns ->
+        IO.bind (MVar.newEmpty lensMVResultMap) <| \rmvar ->
+        IO.bind (forkWithKey lensMVResult (checkModule env foreigns rmvar) statuses) <| \resultMVars ->
+        IO.bind (MVar.write lensMVResultMap rmvar resultMVars) <| \_ ->
+        IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVResult) resultMVars) <| \resultMaybes ->
+        let
+          results = Dict.toList resultMaybes
+            |> List.filterMap (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
+            |> Dict.fromList
+        in
+        IO.bind (writeDetails root details results) <| \_ ->
+        finalizeExposed root docsGoal exposed results
 
 
 
@@ -264,23 +276,40 @@ fromPaths root details paths =
       IO.bind (Details.loadInterfaces root details) <| \dmvar ->
       IO.bind (MVar.new lensMVStatusMap Map.empty) <| \smvar ->
       IO.bind (NE.traverse IO.pure IO.liftA2 IO.liftA2 (\v -> fork lensMVRootStatus <| crawlRoot env smvar v) lroots) <| \srootMVars ->
-      IO.bind (NE.traverse IO.pure IO.liftA2 IO.liftA2 (MVar.read lensMVRootStatus) srootMVars) <| \sroots ->
-      IO.bind (IO.andThen (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVStatus)) <| MVar.read lensMVStatusMap smvar) <| \statuses ->
+      IO.bind (NE.traverse IO.pure IO.liftA2 IO.liftA2 (MVar.read lensMVRootStatus) srootMVars) <| \srootMaybes ->
+      case NE.combineMaybes srootMaybes of
+        Just sroots ->
+          IO.bind (IO.andThen (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVStatus)) 
+            <| (MVar.read lensMVStatusMap smvar |> IO.fmap (Maybe.withDefault Dict.empty))
+          ) 
+          <| \statuseMaybes ->
+          let
+            statuses = Dict.toList statuseMaybes
+              |> List.filterMap (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
+              |> Dict.fromList
+          in
+          IO.bind (checkMidpointAndRoots dmvar statuses sroots) <| \midpoint ->
+          case midpoint of
+            Left problem ->
+              IO.return (Left (Exit.BuildProjectProblem problem))
 
-      IO.bind (checkMidpointAndRoots dmvar statuses sroots) <| \midpoint ->
-      case midpoint of
-        Left problem ->
-          IO.return (Left (Exit.BuildProjectProblem problem))
+            Right foreigns ->
+              -- compile
+              IO.bind (MVar.newEmpty lensMVResultMap) <| \rmvar ->
+              IO.bind (forkWithKey lensMVResult (checkModule env foreigns rmvar) statuses) <| \resultsMVars ->
+              IO.bind (MVar.write lensMVResultMap rmvar resultsMVars) <| \_ ->
+              IO.bind (NE.traverse IO.pure IO.liftA2 IO.liftA2 (\v -> fork lensMVRootResult (checkRoot env resultsMVars v)) sroots) <| \rrootMVars ->
+              IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVResult) resultsMVars) <| \resultMaybes ->
+              let
+                results = Dict.toList resultMaybes
+                  |> List.filterMap (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
+                  |> Dict.fromList
+              in
+              IO.bind (writeDetails root details results) <| \_ ->
+              IO.fmap (toArtifacts env foreigns results) <| NE.traverse IO.pure IO.liftA2 IO.liftA2 (\x -> MVar.read lensMVRootResult x |> IO.fmap (Maybe.withDefault ROutsideBlocked)) rrootMVars
 
-        Right foreigns ->
-          -- compile
-          IO.bind (MVar.newEmpty lensMVResultMap) <| \rmvar ->
-          IO.bind (forkWithKey lensMVResult (checkModule env foreigns rmvar) statuses) <| \resultsMVars ->
-          IO.bind (MVar.write lensMVResultMap rmvar resultsMVars) <| \_ ->
-          IO.bind (NE.traverse IO.pure IO.liftA2 IO.liftA2 (\v -> fork lensMVRootResult (checkRoot env resultsMVars v)) sroots) <| \rrootMVars ->
-          IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVResult) resultsMVars) <| \results ->
-          IO.bind (writeDetails root details results) <| \_ ->
-          IO.fmap (toArtifacts env foreigns results) <| NE.traverse IO.pure IO.liftA2 IO.liftA2 (MVar.read lensMVRootResult) rrootMVars
+        Nothing ->
+          IO.return (Left (Exit.BuildProjectProblem Exit.BP_CannotLoadDependencies))
 
 
 
@@ -321,13 +350,18 @@ crawlDeps env mvar deps blockedValue =
   let
     crawlNew name () = fork lensMVStatus (crawlModule env mvar (DocsNeed False) name)
   in
-  IO.bind (MVar.read lensMVStatusMap mvar) <| \statusDict ->
-  let depsDict = Map.fromKeys (\_ -> ()) deps in
-  let newsDict = Map.difference depsDict statusDict in
-  IO.bind (Map.traverseWithKey IO.pure IO.liftA2 crawlNew newsDict) <| \statuses ->
-  IO.bind (MVar.write lensMVStatusMap mvar (Map.union statuses statusDict)) <| \_ ->
-  IO.bind (Map.mapM_ IO.return IO.bind (MVar.read lensMVStatus) statuses) <| \_ ->
-  IO.return blockedValue
+  IO.bind (MVar.read lensMVStatusMap mvar) <| \maybeStatusDict ->
+  case maybeStatusDict of
+    Just statusDict ->
+      let depsDict = Map.fromKeys (\_ -> ()) deps in
+      let newsDict = Map.difference depsDict statusDict in
+      IO.bind (Map.traverseWithKey IO.pure IO.liftA2 crawlNew newsDict) <| \statuses ->
+      IO.bind (MVar.write lensMVStatusMap mvar (Map.union statuses statusDict)) <| \_ ->
+      IO.bind (Map.mapM_ IO.return IO.bind (MVar.read lensMVStatus) statuses) <| \_ ->
+      IO.return blockedValue
+
+    Nothing ->
+      IO.return blockedValue
 
 
 crawlModule : Env -> MVar StatusDict -> DocsNeed -> ModuleName.Raw -> () -> IO a e f g h Status
@@ -446,53 +480,62 @@ checkModule : Env -> Dependencies -> MVar ResultDict -> ModuleName.Raw -> Status
 checkModule ((Env root projectType _ _ _ _) as env) foreigns resultsMVar name status () =
   case status of
     SCached ((Details.Local path time deps hasMain lastChange lastCompile) as local) ->
-      IO.bind (MVar.read lensMVResultMap resultsMVar) <| \results ->
-      IO.bind (checkDeps root results deps lastCompile) <| \depsStatus ->
-      case depsStatus of
-        DepsChange ifaces ->
-          IO.bind (File.readUtf8 path) <| \source ->
-            case Parse.fromByteString projectType source of
-              Right modul -> compile env (DocsNeed False) local source ifaces modul
-              Left err ->
-                IO.return <| RProblem <|
-                  Error.Module name path time source (Error.BadSyntax err)
+      IO.bind (MVar.read lensMVResultMap resultsMVar) <| \maybeResults ->
+      case maybeResults of
+        Just results ->
+          IO.bind (checkDeps root results deps lastCompile) <| \depsStatus ->
+          case depsStatus of
+            DepsChange ifaces ->
+              IO.bind (File.readUtf8 path) <| \source ->
+                case Parse.fromByteString projectType source of
+                  Right modul -> compile env (DocsNeed False) local source ifaces modul
+                  Left err ->
+                    IO.return <| RProblem <|
+                      Error.Module name path time source (Error.BadSyntax err)
 
-        DepsSame _ _ ->
-          IO.bind (MVar.new lensMVCachedInterface Unneeded) <| \mvar ->
-          IO.return (RCached hasMain lastChange mvar)
+            DepsSame _ _ ->
+              IO.bind (MVar.new lensMVCachedInterface Unneeded) <| \mvar ->
+              IO.return (RCached hasMain lastChange mvar)
 
-        DepsBlock ->
+            DepsBlock ->
+              IO.return RBlocked
+
+            DepsNotFound problems ->
+              IO.bind (File.readUtf8 path) <| \source ->
+              IO.return <| RProblem <| Error.Module name path time source <|
+                case Parse.fromByteString projectType source of
+                  Right (Src.Module _ _ _ imports _ _ _ _ _) ->
+                    Error.BadImports (toImportErrors env results imports problems)
+
+                  Left err ->
+                    Error.BadSyntax err
+        Nothing ->
           IO.return RBlocked
-
-        DepsNotFound problems ->
-          IO.bind (File.readUtf8 path) <| \source ->
-          IO.return <| RProblem <| Error.Module name path time source <|
-            case Parse.fromByteString projectType source of
-              Right (Src.Module _ _ _ imports _ _ _ _ _) ->
-                Error.BadImports (toImportErrors env results imports problems)
-
-              Left err ->
-                Error.BadSyntax err
 
     SChanged ((Details.Local path time deps _ _ lastCompile) as local) source ((Src.Module _ _ _ imports _ _ _ _ _) as modul) docsNeed ->
-      IO.bind (MVar.read lensMVResultMap resultsMVar) <| \results ->
-      IO.bind (checkDeps root results deps lastCompile) <| \depsStatus ->
-      case depsStatus of
-        DepsChange ifaces ->
-          compile env docsNeed local source ifaces modul
+      IO.bind (MVar.read lensMVResultMap resultsMVar) <| \maybeResults ->
+      case maybeResults of
+        Just results ->
+          IO.bind (checkDeps root results deps lastCompile) <| \depsStatus ->
+          case depsStatus of
+            DepsChange ifaces ->
+              compile env docsNeed local source ifaces modul
 
-        DepsSame same cached ->
-          IO.bind (loadInterfaces root same cached) <| \maybeLoaded ->
-          case maybeLoaded of
-            Nothing     -> IO.return RBlocked
-            Just ifaces -> compile env docsNeed local source ifaces modul
+            DepsSame same cached ->
+              IO.bind (loadInterfaces root same cached) <| \maybeLoaded ->
+              case maybeLoaded of
+                Nothing     -> IO.return RBlocked
+                Just ifaces -> compile env docsNeed local source ifaces modul
 
-        DepsBlock ->
+            DepsBlock ->
+              IO.return RBlocked
+
+            DepsNotFound problems ->
+              IO.return <| RProblem <| Error.Module name path time source <|
+                Error.BadImports (toImportErrors env results imports problems)
+        Nothing ->
           IO.return RBlocked
 
-        DepsNotFound problems ->
-          IO.return <| RProblem <| Error.Module name path time source <|
-            Error.BadImports (toImportErrors env results imports problems)
 
     SBadImport importProblem ->
       IO.return (RNotFound importProblem)
@@ -502,9 +545,11 @@ checkModule ((Env root projectType _ _ _ _) as env) foreigns resultsMVar name st
         Error.BadSyntax err
 
     SForeign home ->
-      case Map.ex foreigns (ModuleName.toComparable <| ModuleName.Canonical home name) of
-        I.Public iface -> IO.return (RForeign iface)
-        I.Private _ _ _ -> Debug.todo <| "mistakenly seeing private interface for " ++ Pkg.toChars home ++ " " ++ ModuleName.toChars name
+      case Map.lookup (ModuleName.toComparable <| ModuleName.Canonical home name) foreigns of
+        Just (I.Public iface) -> IO.return (RForeign iface)
+        Just (I.Private _ _ _) -> IO.return RBlocked
+        Nothing -> IO.return RBlocked
+          -- Error.CompilerBug ("mistakenly seeing private interface for " ++ Pkg.toChars home ++ " " ++ ModuleName.toChars name)
 
     SKernel ->
       IO.return RKernel
@@ -534,31 +579,41 @@ checkDepsHelp : FilePath -> ResultDict -> TList ModuleName.Raw -> TList Dep -> T
 checkDepsHelp root results deps new same cached importProblems isBlocked lastDepChange lastCompile =
   case deps of
     dep::otherDeps ->
-      IO.bind (MVar.read lensMVResult (Map.ex results dep)) <| \result ->
-      case result of
-        RNew (Details.Local _ _ _ _ lastChange _) iface _ _ ->
-          checkDepsHelp root results otherDeps ((dep,iface) :: new) same cached importProblems isBlocked (max lastChange lastDepChange) lastCompile
+      case (Map.lookup dep results) of
+        Just depResult ->
+          IO.bind (MVar.read lensMVResult depResult) <| \maybeResult ->
+          case maybeResult of
+            Just result ->
+              case result of
+                RNew (Details.Local _ _ _ _ lastChange _) iface _ _ ->
+                  checkDepsHelp root results otherDeps ((dep,iface) :: new) same cached importProblems isBlocked (max lastChange lastDepChange) lastCompile
 
-        RSame (Details.Local _ _ _ _ lastChange _) iface _ _ ->
-          checkDepsHelp root results otherDeps new ((dep,iface) :: same) cached importProblems isBlocked (max lastChange lastDepChange) lastCompile
+                RSame (Details.Local _ _ _ _ lastChange _) iface _ _ ->
+                  checkDepsHelp root results otherDeps new ((dep,iface) :: same) cached importProblems isBlocked (max lastChange lastDepChange) lastCompile
 
-        RCached _ lastChange mvar ->
-          checkDepsHelp root results otherDeps new same ((dep,mvar) :: cached) importProblems isBlocked (max lastChange lastDepChange) lastCompile
+                RCached _ lastChange mvar ->
+                  checkDepsHelp root results otherDeps new same ((dep,mvar) :: cached) importProblems isBlocked (max lastChange lastDepChange) lastCompile
 
-        RNotFound prob ->
-          checkDepsHelp root results otherDeps new same cached ((dep,prob) :: importProblems) True lastDepChange lastCompile
+                RNotFound prob ->
+                  checkDepsHelp root results otherDeps new same cached ((dep,prob) :: importProblems) True lastDepChange lastCompile
 
-        RProblem _ ->
-          checkDepsHelp root results otherDeps new same cached importProblems True lastDepChange lastCompile
+                RProblem _ ->
+                  checkDepsHelp root results otherDeps new same cached importProblems True lastDepChange lastCompile
 
-        RBlocked ->
-          checkDepsHelp root results otherDeps new same cached importProblems True lastDepChange lastCompile
+                RBlocked ->
+                  checkDepsHelp root results otherDeps new same cached importProblems True lastDepChange lastCompile
 
-        RForeign iface ->
-          checkDepsHelp root results otherDeps new ((dep,iface) :: same) cached importProblems isBlocked lastDepChange lastCompile
+                RForeign iface ->
+                  checkDepsHelp root results otherDeps new ((dep,iface) :: same) cached importProblems isBlocked lastDepChange lastCompile
 
-        RKernel ->
-          checkDepsHelp root results otherDeps new same cached importProblems isBlocked lastDepChange lastCompile
+                RKernel ->
+                  checkDepsHelp root results otherDeps new same cached importProblems isBlocked lastDepChange lastCompile
+
+            Nothing -> 
+              IO.return DepsBlock
+
+        Nothing -> 
+          IO.return DepsBlock
 
 
     [] ->
@@ -600,7 +655,7 @@ toImportErrors (Env _ _ _ _ locals foreigns) results imports problems =
       Map.fromList (MList.map (\(Src.Import (A.At region name) _ _) -> (name, region)) imports)
 
     toError (name, problem) =
-      Import.Error (Map.ex regionDict name) name unimportedModules problem
+      Import.Error (Map.lookup name regionDict |> Maybe.withDefault (A.Region (A.Position 0 0) (A.Position 0 0))) name unimportedModules problem
   in
   NE.fmap toError problems
 
@@ -622,26 +677,30 @@ loadInterfaces root same cached =
 
 loadInterface : FilePath -> CDep -> IO a e f g h (Maybe Dep)
 loadInterface root (name, ciMvar) =
-  IO.bind (MVar.read lensMVCachedInterface ciMvar) <| \cachedInterface ->
-  case cachedInterface of
-    Corrupted ->
-      IO.bind (MVar.write lensMVCachedInterface ciMvar cachedInterface) <| \_ ->
-      IO.return Nothing
-
-    Loaded iface ->
-      IO.bind (MVar.write lensMVCachedInterface ciMvar cachedInterface) <| \_ ->
-      IO.return (Just (name, iface))
-
-    Unneeded ->
-      IO.bind (File.readBinary I.bInterface (Stuff.elmi root name)) <| \maybeIface ->
-      case maybeIface of
-        Nothing ->
-          IO.bind (MVar.write lensMVCachedInterface ciMvar Corrupted) <| \_ ->
+  IO.bind (MVar.read lensMVCachedInterface ciMvar) <| \maybeCachedInterface ->
+  case maybeCachedInterface of
+    Just cachedInterface ->
+      case cachedInterface of
+        Corrupted ->
+          IO.bind (MVar.write lensMVCachedInterface ciMvar cachedInterface) <| \_ ->
           IO.return Nothing
 
-        Just iface ->
-          IO.bind (MVar.write lensMVCachedInterface ciMvar (Loaded iface)) <| \_ ->
+        Loaded iface ->
+          IO.bind (MVar.write lensMVCachedInterface ciMvar cachedInterface) <| \_ ->
           IO.return (Just (name, iface))
+
+        Unneeded ->
+          IO.bind (File.readBinary I.bInterface (Stuff.elmi root name)) <| \maybeIface ->
+          case maybeIface of
+            Nothing ->
+              IO.bind (MVar.write lensMVCachedInterface ciMvar Corrupted) <| \_ ->
+              IO.return Nothing
+
+            Just iface ->
+              IO.bind (MVar.write lensMVCachedInterface ciMvar (Loaded iface)) <| \_ ->
+              IO.return (Just (name, iface))
+    Nothing ->
+      IO.return Nothing
 
 
 
@@ -652,10 +711,10 @@ checkMidpoint : MVar (Maybe Dependencies) -> Map.Map ModuleName.Raw Status -> IO
 checkMidpoint dmvar statuses =
   case checkForCycles statuses of
     Nothing ->
-      IO.bind (MVar.read Details.lensMVInterfaces dmvar) <| \maybeForeigns ->
-      case maybeForeigns of
-        Nothing -> IO.return (Left Exit.BP_CannotLoadDependencies)
-        Just fs -> IO.return (Right fs)
+      IO.bind (MVar.read Details.lensMVInterfaces dmvar) <| \maybeMaybeForeigns ->
+      case maybeMaybeForeigns of
+        Just (Just fs) -> IO.return (Right fs)
+        _ -> IO.return (Left Exit.BP_CannotLoadDependencies)
 
     Just (NE.CList name names) ->
       IO.bind (MVar.read Details.lensMVInterfaces dmvar) <| \_ ->
@@ -668,10 +727,10 @@ checkMidpointAndRoots dmvar statuses sroots =
     Nothing ->
       case checkUniqueRoots statuses sroots of
         Nothing ->
-          IO.bind (MVar.read Details.lensMVInterfaces dmvar) <| \maybeForeigns ->
-          case maybeForeigns of
-            Nothing -> IO.return (Left Exit.BP_CannotLoadDependencies)
-            Just fs -> IO.return (Right fs)
+          IO.bind (MVar.read Details.lensMVInterfaces dmvar) <| \maybeMaybeForeigns ->
+          case maybeMaybeForeigns of
+            Just (Just fs) -> IO.return (Right fs)
+            _ -> IO.return (Left Exit.BP_CannotLoadDependencies)
 
         Just problem ->
           IO.bind (MVar.read Details.lensMVInterfaces dmvar) <| \_ ->
@@ -883,15 +942,21 @@ addErrors result errors =
 
 addImportProblems : Map.Map ModuleName.Raw Result -> ModuleName.Raw -> TList (ModuleName.Raw, Import.Problem) -> TList (ModuleName.Raw, Import.Problem)
 addImportProblems results name problems =
-  case Map.ex results name of
-    RNew  _ _ _ _ -> problems
-    RSame _ _ _ _ -> problems
-    RCached _ _ _ -> problems
-    RNotFound p   -> (name, p) :: problems
-    RProblem _    -> problems
-    RBlocked      -> problems
-    RForeign _    -> problems
-    RKernel       -> problems
+  case Map.lookup name results of
+    Just result ->
+      case result of
+        RNew  _ _ _ _ -> problems
+        RSame _ _ _ _ -> problems
+        RCached _ _ _ -> problems
+        RNotFound p   -> (name, p) :: problems
+        RProblem _    -> problems
+        RBlocked      -> problems
+        RForeign _    -> problems
+        RKernel       -> problems
+
+    Nothing ->
+      problems
+
 
 
 
@@ -1132,10 +1197,15 @@ crawlRoot ((Env _ projectType _ buildID _ _) as env) mvar root () =
   case root of
     LInside name ->
       IO.bind (MVar.newEmpty lensMVStatus) <| \statusMVar ->
-      IO.bind (MVar.read lensMVStatusMap mvar) <| \statusDict ->
-      IO.bind (MVar.write lensMVStatusMap mvar (Map.insert name statusMVar statusDict)) <| \_ ->
-      IO.bind (IO.andThen (MVar.write lensMVStatus statusMVar) <| crawlModule env mvar (DocsNeed False) name ()) <| \_ ->
-      IO.return (SInside name)
+      IO.bind (MVar.read lensMVStatusMap mvar) <| \maybeStatusDict ->
+      case maybeStatusDict of
+        Just statusDict ->
+          IO.bind (MVar.write lensMVStatusMap mvar (Map.insert name statusMVar statusDict)) <| \_ ->
+          IO.bind (IO.andThen (MVar.write lensMVStatus statusMVar) <| crawlModule env mvar (DocsNeed False) name ()) <| \_ ->
+          IO.return (SInside name)
+
+        Nothing ->
+          IO.return (SInside "Compiler bug in crawlRoot")
 
     LOutside path ->
       IO.bind (File.getTime path) <| \time ->
@@ -1245,7 +1315,7 @@ gatherProblemsOrMains results (NE.CList rootResult rootResults) =
     (ROutsideOk n i o, (   [], ms)) -> Right (NE.CList (Outside n i o) ms)
     (ROutsideOk _ _ _, (e::es, _ )) -> Left  (NE.CList e es)
     (ROutsideErr e   , (   es, _ )) -> Left  (NE.CList e es)
-    (ROutsideBlocked , (   [], _ )) -> Debug.todo "seems like elm-stuff/ is corrupted"
+    (ROutsideBlocked , (   [], _ )) -> Left  (NE.CList (Error.Module "" (SysFile.fromString "") (File.zeroTime) "" (Error.CompilerBug "Compiler bug in gatherProblemsOrMains")) [])
     (ROutsideBlocked , (e::es, _ )) -> Left  (NE.CList e es)
 
 
@@ -1255,16 +1325,11 @@ addInside name result modules =
     RNew  _ iface objs _ -> Fresh name iface objs :: modules
     RSame _ iface objs _ -> Fresh name iface objs :: modules
     RCached main _ mvar  -> Cached name main mvar :: modules
-    RNotFound _          -> Debug.todo (badInside name)
-    RProblem _           -> Debug.todo (badInside name)
-    RBlocked             -> Debug.todo (badInside name)
+    RNotFound _          -> [] -- TODO there are errors inside that should have been picked up already
+    RProblem _           -> []
+    RBlocked             -> []
     RForeign _           -> modules
     RKernel              -> modules
-
-
-badInside : ModuleName.Raw -> String
-badInside name =
-  "Error from `" ++ name ++ "` should have been reported already."
 
 
 addOutside : RootResult -> TList Module -> TList Module
@@ -1307,7 +1372,14 @@ fromRepl root details source =
       IO.bind (MVar.new lensMVStatusMap Map.empty) <| \mvar ->
       IO.bind (crawlDeps env mvar deps ()) <| \_ ->
 
-      IO.bind (IO.andThen (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVStatus)) <| MVar.read lensMVStatusMap mvar) <| \statuses ->
+      IO.bind (IO.andThen (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVStatus)) 
+        <| (MVar.read lensMVStatusMap mvar |> IO.fmap (Maybe.withDefault Dict.empty))
+      ) <| \maybeStatuses ->
+      let
+        statuses = Dict.toList maybeStatuses
+          |> List.filterMap (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
+          |> Dict.fromList
+      in
       IO.bind (checkMidpoint dmvar statuses) <| \midpoint ->
 
       case midpoint of
@@ -1318,7 +1390,12 @@ fromRepl root details source =
           IO.bind (MVar.newEmpty lensMVResultMap) <| \rmvar ->
           IO.bind (forkWithKey lensMVResult (checkModule env foreigns rmvar) statuses) <| \resultMVars ->
           IO.bind (MVar.write lensMVResultMap rmvar resultMVars) <| \_ ->
-          IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVResult) resultMVars) <| \results ->
+          IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVResult) resultMVars) <| \resultMaybes ->
+          let
+            results = Dict.toList resultMaybes
+              |> List.filterMap (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
+              |> Dict.fromList
+          in
           IO.bind (writeDetails root details results) <| \_ ->
           IO.bind (checkDeps root resultMVars deps 0) <| \depsStatus ->
           finalizeReplArtifacts env source modul depsStatus resultMVars results

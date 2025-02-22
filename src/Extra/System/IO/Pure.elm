@@ -22,6 +22,7 @@ module Extra.System.IO.Pure exposing
     , pure
     , return
     , sequenceAList
+    , traverseFilterMap
     , traverseList
     , traverseMap
     , traverseWithKey
@@ -276,6 +277,33 @@ mapMMapHelp_ callback ( list, result ) =
 traverseMap : (a -> IO s b) -> Map.Map comparable a -> IO s (Map.Map comparable b)
 traverseMap callback map =
     loop (traverseMapHelp callback) ( Map.toList map, Map.empty )
+
+
+traverseFilterMap : (a -> IO s (Maybe b)) -> Map.Map comparable a -> IO s (Map.Map comparable b)
+traverseFilterMap callback map =
+    loop (traverseFilterMapHelp callback) ( Map.toList map, Map.empty )
+
+
+traverseFilterMapHelp : (a -> IO s (Maybe b)) -> ( TList ( comparable, a ), Map.Map comparable b ) -> IO s (Step ( TList ( comparable, a ), Map.Map comparable b ) (Map.Map comparable b))
+traverseFilterMapHelp callback ( pairs, result ) =
+    case pairs of
+        [] ->
+            return (Done result)
+
+        ( k, a ) :: rest ->
+            fmap
+                (\maybeB ->
+                    Loop
+                        ( rest
+                        , case maybeB of
+                            Just b ->
+                                Map.insert k b result
+
+                            Nothing ->
+                                result
+                        )
+                )
+                (callback a)
 
 
 traverseMapHelp : (a -> IO s b) -> ( TList ( comparable, a ), Map.Map comparable b ) -> IO s (Step ( TList ( comparable, a ), Map.Map comparable b ) (Map.Map comparable b))

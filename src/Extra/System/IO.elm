@@ -99,8 +99,8 @@ now =
 
 
 log : String -> a -> IO s ()
-log msg a s =
-    ( (\_ -> Pure ()) (Debug.log msg a), s )
+log _ a s =
+    ( (\_ -> Pure ()) a, s )
 
 
 noOp : IO s ()

@@ -20,6 +20,7 @@ import Builder.Reporting.Exit as Exit
 import Builder.Reporting.Task as Task
 import Builder.Stuff as Stuff
 import Compiler.AST.Optimized as Opt
+import Compiler.AST.Canonical as Can
 import Compiler.Data.Name as N
 import Compiler.Data.NonEmptyList as NE
 import Compiler.Elm.Compiler.Type.Extract as Extract
@@ -29,6 +30,7 @@ import Compiler.Elm.Package as Pkg
 import Compiler.Generate.JavaScript as JS
 import Compiler.Generate.Mode as Mode
 import Compiler.Nitpick.Debug as Nitpick
+import Dict
 import Extra.System.File exposing (FilePath)
 import Extra.System.MVar exposing (MVar)
 import Extra.Type.Either exposing (Either(..))
@@ -39,6 +41,7 @@ import Extra.Type.Set as Set
 import Extra.System.IO as IO
 import Extra.System.MVar as MVar
 import Global
+import Maybe.Extra
 
 
 -- NOTE: This is used by Make, Repl, and Reactor right now. But it may be
@@ -135,7 +138,7 @@ repl : FilePath -> Details.Details -> Bool -> Bool -> Build.ReplArtifacts -> N.N
 repl root details ansi htmlEnabled (Build.ReplArtifacts home modules localizer annotations) name =
   Task.bind (Task.andThen finalizeObjects <| loadObjects root details modules) <| \objects ->
   let graph = objectsToGlobalGraph objects in
-  Task.return <| JS.generateForRepl ansi htmlEnabled localizer graph home name (Map.ex annotations name)
+  Task.return <| JS.generateForRepl ansi htmlEnabled localizer graph home name (Map.lookup name annotations |> Maybe.withDefault (Can.Forall Dict.empty Can.TUnit))
 
 
 
@@ -213,11 +216,20 @@ type Objects =
 finalizeObjects : LoadingObjects -> Task z a f g h Objects
 finalizeObjects (LoadingObjects mvar mvars) =
   Task.eio identity <|
-    IO.bind (MVar.read Details.lensMVGlobalGraph mvar) <| \result ->
-    IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVLocalGraph) mvars) <| \results ->
-    case Maybe.map2 Objects result (Map.sequenceA Just Maybe.map2 results) of
-      Just loaded -> IO.return (Right loaded)
-      Nothing     -> IO.return (Left Exit.GenerateCannotLoadArtifacts)
+    IO.bind (MVar.read Details.lensMVGlobalGraph mvar) <| \maybeResult ->
+    case maybeResult of
+      Just result ->
+        IO.bind (Map.traverse IO.pure IO.liftA2 (MVar.read lensMVLocalGraph) mvars) <| \resultMaybes ->
+        let
+          results = Dict.toList resultMaybes
+            |> List.filterMap (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
+            |> Dict.fromList
+        in
+        case Maybe.map2 Objects result (Map.sequenceA Just Maybe.map2 results) of
+          Just loaded -> IO.return (Right loaded)
+          Nothing     -> IO.return (Left Exit.GenerateCannotLoadArtifacts)
+      Nothing ->
+        IO.return (Left Exit.GenerateCannotLoadArtifacts)
 
 
 objectsToGlobalGraph : Objects -> Opt.GlobalGraph
@@ -234,8 +246,8 @@ loadTypes root ifaces modules =
   Task.eio identity <|
     IO.bind (MList.traverse IO.pure IO.liftA2 (loadTypesHelp root) modules) <| \mvars ->
     let foreigns = Extract.mergeMany (Map.elems (Map.mapWithKey Extract.fromDependencyInterface ifaces)) in
-    IO.bind (MList.traverse IO.pure IO.liftA2 (MVar.read lensMVTypes) mvars) <| \results ->
-    case MList.sequenceA Just Maybe.map2 results of
+    IO.bind (MList.traverse IO.pure IO.liftA2 (MVar.read lensMVTypes) mvars) <| \resultMaybes ->
+    case MList.sequenceA Just Maybe.map2 (List.map Maybe.Extra.join resultMaybes) of
       Just ts -> IO.return (Right (Extract.merge foreigns (Extract.mergeMany ts)))
       Nothing -> IO.return (Left Exit.GenerateCannotLoadArtifacts)
 
@@ -247,18 +259,23 @@ loadTypesHelp root modul =
       MVar.new lensMVTypes (Just (Extract.fromInterface name iface))
 
     Build.Cached name _ ciMVar ->
-      IO.bind (MVar.read Build.lensMVCachedInterface ciMVar) <| \cachedInterface ->
-      case cachedInterface of
-      Build.Unneeded ->
-        IO.bind (MVar.newEmpty lensMVTypes) <| \mvar ->
-        IO.bind (MVar.wait lensMVTypes mvar <| \() ->
-          IO.rmap
-            (File.readBinary I.bInterface (Stuff.elmi root name))
-            (Maybe.map (Extract.fromInterface name))) <| \_ ->
-        IO.return mvar
+      IO.bind (MVar.read Build.lensMVCachedInterface ciMVar) <| \maybeCachedInterface ->
+      case maybeCachedInterface of
+        Just cachedInterface ->
+          case cachedInterface of
+            Build.Unneeded ->
+              IO.bind (MVar.newEmpty lensMVTypes) <| \mvar ->
+              IO.bind (MVar.wait lensMVTypes mvar <| \() ->
+                IO.rmap
+                  (File.readBinary I.bInterface (Stuff.elmi root name))
+                  (Maybe.map (Extract.fromInterface name))) <| \_ ->
+              IO.return mvar
 
-      Build.Loaded iface ->
-        MVar.new lensMVTypes (Just (Extract.fromInterface name iface))
+            Build.Loaded iface ->
+              MVar.new lensMVTypes (Just (Extract.fromInterface name iface))
 
-      Build.Corrupted ->
-        MVar.new lensMVTypes Nothing
+            Build.Corrupted ->
+              MVar.new lensMVTypes Nothing
+              
+        Nothing ->
+          MVar.new lensMVTypes Nothing

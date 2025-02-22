@@ -104,7 +104,7 @@ toCommandList : String -> TList Internal.Command -> D.Doc
 toCommandList exeName commands =
   let
     names = MList.map Internal.toName commands
-    width = MList.maximum (MList.map String.length names)
+    width = List.maximum (MList.map String.length names) |> Maybe.withDefault 80
 
     toExample name =
       D.fromChars <| exeName ++ " " ++ name ++ String.repeat (width - String.length name) " " ++ " --help"

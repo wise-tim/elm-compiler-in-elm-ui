@@ -33,6 +33,7 @@ import Compiler.Reporting.Annotation as A
 import Extra.Type.List as MList exposing (TList)
 import Extra.Type.Map as Map
 import Extra.Type.Set as Set
+import List.Extra
 
 
 
@@ -310,7 +311,7 @@ generateField mode name =
       JsName.fromLocal name
 
     Mode.Prod fields ->
-      Map.ex fields name
+      Map.lookup name fields |> Maybe.withDefault (JsName.makeTemp ("Compiler bug missing field " ++ name))
 
 
 
@@ -629,11 +630,14 @@ apply func value =
 
 append : Mode.Mode -> Opt.Expr -> Opt.Expr -> JS.Expr
 append mode left right =
-  let seqs = generateJsExpr mode left :: toSeqs mode right in
+  let 
+    seqs = generateJsExpr mode left :: toSeqs mode right 
+    start = (List.Extra.last seqs |> Maybe.withDefault (JS.Ref (JsName.makeTemp "Compiler bug appending js")))
+  in
   if MList.any isStringLiteral seqs then
-    MList.foldr1 (JS.Infix JS.OpAdd) seqs
+    List.foldr (JS.Infix JS.OpAdd) start seqs
   else
-    MList.foldr1 jsAppend seqs
+    List.foldr jsAppend start seqs
 
 
 jsAppend : JS.Expr -> JS.Expr -> JS.Expr
@@ -873,15 +877,25 @@ generateDecider mode label root decisionTree =
       [ JS.Break (Just (JsName.makeLabel label index)) ]
 
     Opt.Chain testChain success failure ->
+      let
+        list = (List.map (generateIfTest mode root) testChain)
+
+        start = (List.Extra.last list |> Maybe.withDefault (JS.Ref (JsName.makeTemp "Compiler bug generating decider")))
+      in
       [ JS.IfStmt
-          (MList.foldl1 (JS.Infix JS.OpAnd) (MList.map (generateIfTest mode root) testChain))
+          (List.foldl (JS.Infix JS.OpAnd) start list)
           (JS.Block <| generateDecider mode label root success)
           (JS.Block <| generateDecider mode label root failure)
       ]
 
     Opt.FanOut path edges fallback ->
       [ JS.Switch
-          (generateCaseTest mode root path (Tuple.first (MList.head edges)))
+          (case List.head edges of 
+            Just head -> 
+              generateCaseTest mode root path (Tuple.first (head))
+            Nothing ->
+              (JS.Ref (JsName.makeTemp "Compiler bug generating decider"))
+          )
           ( MList.foldr
               (\edge cases -> generateCaseBranch mode label root edge :: cases)
               [ JS.Default (generateDecider mode label root fallback) ]
@@ -938,7 +952,8 @@ generateIfTest mode root (path, test) =
         JS.Access value (JsName.fromLocal "b")
 
     DT.IsTuple ->
-      Debug.todo "COMPILER BUG - there should never be tests on a tuple"
+      -- TODO "COMPILER BUG - there should never be tests on a tuple"
+      value
 
 
 
@@ -967,16 +982,20 @@ generateCaseValue mode test =
       JS.CString string
 
     DT.IsBool _ ->
-      Debug.todo "COMPILER BUG - there should never be three tests on a boolean"
+      -- TODO "COMPILER BUG - there should never be three tests on a boolean"
+      JS.Null
 
     DT.IsCons ->
-      Debug.todo "COMPILER BUG - there should never be three tests on a list"
+      -- TODO "COMPILER BUG - there should never be three tests on a list"
+      JS.Null
 
     DT.IsNil ->
-      Debug.todo "COMPILER BUG - there should never be three tests on a list"
+      -- TODO "COMPILER BUG - there should never be three tests on a list"
+      JS.Null
 
     DT.IsTuple ->
-      Debug.todo "COMPILER BUG - there should never be three tests on a tuple"
+      -- TODO "COMPILER BUG - there should never be three tests on a tuple"
+      JS.Null
 
 
 generateCaseTest : Mode.Mode -> Name.Name -> DT.Path -> DT.Test -> JS.Expr
@@ -1019,16 +1038,20 @@ generateCaseTest mode root path exampleTest =
           value
 
     DT.IsBool _ ->
-      Debug.todo "COMPILER BUG - there should never be three tests on a list"
+      -- TODO "COMPILER BUG - there should never be three tests on a list"
+      value
 
     DT.IsCons ->
-      Debug.todo "COMPILER BUG - there should never be three tests on a list"
+      -- TODO "COMPILER BUG - there should never be three tests on a list"
+      value
 
     DT.IsNil ->
-      Debug.todo "COMPILER BUG - there should never be three tests on a list"
+      -- TODO "COMPILER BUG - there should never be three tests on a list"
+      value
 
     DT.IsTuple ->
-      Debug.todo "COMPILER BUG - there should never be three tests on a list"
+      -- TODO "COMPILER BUG - there should never be three tests on a list"
+      value
 
 
 

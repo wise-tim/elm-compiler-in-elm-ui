@@ -14,7 +14,7 @@ module Compiler.Elm.Version exposing
     , one
     , parser
     , toChars
-    , toComparable
+    , toComparable, zero
     )
 
 import Compiler.Json.Decode as D
@@ -58,6 +58,10 @@ toComparable : Version -> Comparable
 toComparable (Version major minor patch) =
     ( major, minor, patch )
 
+
+zero : Version
+zero =
+    Version 0 0 0
 
 one : Version
 one =

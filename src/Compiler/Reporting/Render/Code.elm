@@ -79,7 +79,7 @@ render (Source sourceLines) ((A.Region (A.Position startLine _) (A.Position endL
                 |> MList.take (1 + endLine - startLine)
 
         width =
-            String.length (String.fromInt (Tuple.first (MList.last relevantLines)))
+            String.length (String.fromInt (Tuple.first (relevantLines |> List.reverse |> List.head |> Maybe.withDefault ( 0, "" ))))
 
         smallerRegion =
             Maybe.withDefault region maybeSubRegion

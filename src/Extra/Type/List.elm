@@ -10,19 +10,15 @@ module Extra.Type.List exposing
     , filter
     , filterM
     , foldl
-    , foldl1
     , foldlM
     , foldr
-    , foldr1
     , foldrM
     , forM_
-    , head
     , imapM_
     , indexedFrom
     , init
     , insertBy
     , intersperse
-    , last
     , length
     , lookup
     , map
@@ -30,7 +26,6 @@ module Extra.Type.List exposing
     , mapM_
     , mapMaybe
     , mappend
-    , maximum
     , mempty
     , notelem
     , null
@@ -126,28 +121,6 @@ foldl : Foldable.Foldl a (TList a) b
 foldl f z l =
     List.foldl (\a b -> f b a) z l
 
-
-foldl1 : (a -> a -> a) -> TList a -> a
-foldl1 f xs =
-    let
-        mf m y =
-            Just
-                (case m of
-                    Nothing ->
-                        y
-
-                    Just x ->
-                        f x y
-                )
-    in
-    case foldl mf Nothing xs of
-        Nothing ->
-            Debug.todo "Extra.Type.List_.foldl1: empty list"
-
-        Just x ->
-            x
-
-
 foldlM :
     Monad.Return b mb
     -> Monad.Bind b mb mb
@@ -161,26 +134,6 @@ foldr =
     List.foldr
 
 
-foldr1 : (a -> a -> a) -> TList a -> a
-foldr1 f xs =
-    let
-        mf : a -> Maybe a -> Maybe a
-        mf x acc =
-            Just
-                (case acc of
-                    Nothing ->
-                        x
-
-                    Just y ->
-                        f x y
-                )
-    in
-    case foldr mf Nothing xs of
-        Nothing ->
-            Debug.todo "Extra.Type.List_.foldr1: empty list"
-
-        Just x ->
-            x
 
 
 foldrM :
@@ -197,16 +150,6 @@ forM_ :
     -> Foldable.ForM_ a (TList a) mb mu
 forM_ pReturn pBind l f =
     Foldable.forM_ foldr pReturn pBind l f
-
-
-head : TList a -> a
-head l =
-    case l of
-        h :: _ ->
-            h
-
-        [] ->
-            Debug.todo "Extra.Type.List_.head: empty list"
 
 
 imapM_ :
@@ -246,11 +189,6 @@ insertBy cmp x ys =
 intersperse : a -> TList a -> TList a
 intersperse =
     List.intersperse
-
-
-last : TList a -> a
-last l =
-    head (reverse l)
 
 
 length : Foldable.Length (TList a)
@@ -303,17 +241,7 @@ mappend =
     List.append
 
 
-maximum : TList comparable -> comparable
-maximum l =
-    case List.maximum l of
-        Just x ->
-            x
-
-        Nothing ->
-            Debug.todo "Extra.Type.List.maximum: empty list"
-
-
-mempty : Monoid.Mempty (TList a)
+mempty : TList a
 mempty =
     []
 
